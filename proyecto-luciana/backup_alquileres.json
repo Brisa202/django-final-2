@@ -1,0 +1,38 @@
+[
+{
+  "model": "alquileres.alquiler",
+  "pk": 12,
+  "fields": {
+    "pedido": 12,
+    "cliente_fk": 6,
+    "cliente": "Brisa Itzel Michel",
+    "estado": "pendiente",
+    "creado_en": "2025-11-03T08:35:56.751Z",
+    "garantia_estado": "pendiente",
+    "garantia_monto_cobrado": null,
+    "garantia_metodo": "",
+    "garantia_nota": "",
+    "garantia_fecha_cobro": null
+  }
+},
+{
+  "model": "alquileres.detalquiler",
+  "pk": 25,
+  "fields": {
+    "alquiler": 12,
+    "producto": 11,
+    "cantidad": 19,
+    "precio_unit": "1000.00"
+  }
+},
+{
+  "model": "alquileres.detalquiler",
+  "pk": 26,
+  "fields": {
+    "alquiler": 12,
+    "producto": 7,
+    "cantidad": 19,
+    "precio_unit": "1600.00"
+  }
+}
+]
