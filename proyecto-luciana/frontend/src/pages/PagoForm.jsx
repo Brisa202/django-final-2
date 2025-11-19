@@ -14,7 +14,9 @@ import {
   CheckCircle2,
   Loader2,
   Building2,
-  MessageCircle
+  MessageCircle,
+  Info,
+  AlertTriangle
 } from 'lucide-react';
 
 const tiposAlquiler = [
@@ -24,7 +26,6 @@ const tiposAlquiler = [
   { value: "APLICACION_GARANTIA", label: "Garantía aplicada", icon: Shield, color: "#ef4444" },
 ];
 
-// Información de cuentas bancarias
 const CUENTAS_BANCARIAS = [
   {
     id: 1,
@@ -44,7 +45,7 @@ const CUENTAS_BANCARIAS = [
   }
 ];
 
-const WHATSAPP_NUMBER = "543875130659"; // WhatsApp de Brisa
+const WHATSAPP_NUMBER = "543875130659";
 
 function PagoForm() {
   const navigate = useNavigate();
@@ -54,6 +55,15 @@ function PagoForm() {
   const [alquilerSeleccionado, setAlquilerSeleccionado] = useState(null);
   const [cajaAbierta, setCajaAbierta] = useState(null);
   const [loadingCaja, setLoadingCaja] = useState(false);
+
+  // Estado de pagos del alquiler
+  const [estadoPagos, setEstadoPagos] = useState({
+    totalPagado: 0,
+    saldoPendiente: 0,
+    garantiaCobrada: false,
+    garantiaDevuelta: false,
+    garantiaAplicada: false
+  });
 
   const [form, setForm] = useState({
     alquiler: "",
@@ -66,6 +76,7 @@ function PagoForm() {
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [advertencia, setAdvertencia] = useState("");
 
   useEffect(() => {
     loadOptions();
@@ -105,10 +116,54 @@ function PagoForm() {
     }
   }
 
+  async function cargarEstadoPagos(alquilerId) {
+    try {
+      const res = await axios.get(`/api/pagos/`, {
+        params: { alquiler: alquilerId }
+      });
+
+      const pagos = Array.isArray(res.data) ? res.data : res.data.results || [];
+
+      // Calcular total pagado de SALDO
+      const totalPagadoSaldo = pagos
+        .filter(p => p.tipo_pago === "SALDO")
+        .reduce((sum, p) => sum + Number(p.monto), 0);
+
+      // Verificar estados de garantía
+      const garantiaCobrada = pagos.some(p => p.tipo_pago === "GARANTIA");
+      const garantiaDevuelta = pagos.some(p => p.tipo_pago === "DEVOLUCION_GARANTIA");
+      const garantiaAplicada = pagos.some(p => p.tipo_pago === "APLICACION_GARANTIA");
+
+      return {
+        totalPagado: totalPagadoSaldo,
+        garantiaCobrada,
+        garantiaDevuelta,
+        garantiaAplicada
+      };
+    } catch (err) {
+      console.error("Error al cargar estado de pagos", err);
+      return {
+        totalPagado: 0,
+        garantiaCobrada: false,
+        garantiaDevuelta: false,
+        garantiaAplicada: false
+      };
+    }
+  }
+
   async function handleAlquilerChange(e) {
     const alquilerId = e.target.value;
     setForm((prev) => ({ ...prev, alquiler: alquilerId, monto: "" }));
     setAlquilerSeleccionado(null);
+    setEstadoPagos({
+      totalPagado: 0,
+      saldoPendiente: 0,
+      garantiaCobrada: false,
+      garantiaDevuelta: false,
+      garantiaAplicada: false
+    });
+    setError("");
+    setAdvertencia("");
 
     if (!alquilerId) return;
 
@@ -117,34 +172,95 @@ function PagoForm() {
       const alq = res.data;
       setAlquilerSeleccionado(alq);
 
+      // Cargar estado de pagos
+      const estado = await cargarEstadoPagos(alquilerId);
+      const saldoPendiente = Number(alq.monto_total || 0) - estado.totalPagado;
+      
+      setEstadoPagos({
+        ...estado,
+        saldoPendiente: Math.max(0, saldoPendiente)
+      });
+
+      // Establecer monto según tipo
       if (form.tipo_pago === "SALDO") {
         setForm((prev) => ({ 
           ...prev, 
-          monto: alq.monto_total || "" 
+          monto: Math.max(0, saldoPendiente).toString()
         }));
-      } else if (form.tipo_pago === "GARANTIA") {
+      } else if (form.tipo_pago === "GARANTIA" && !estado.garantiaCobrada && !estado.garantiaDevuelta && !estado.garantiaAplicada) {
         setForm((prev) => ({ 
           ...prev, 
           monto: alq.garantia_monto || "" 
         }));
+      } else if (form.tipo_pago === "DEVOLUCION_GARANTIA" && estado.garantiaCobrada && !estado.garantiaDevuelta && !estado.garantiaAplicada) {
+        setForm((prev) => ({ 
+          ...prev, 
+          monto: alq.garantia_monto || "" 
+        }));
+      } else if (form.tipo_pago === "APLICACION_GARANTIA" && estado.garantiaCobrada && !estado.garantiaAplicada && !estado.garantiaDevuelta) {
+        setForm((prev) => ({ 
+          ...prev, 
+          monto: "" 
+        }));
       }
     } catch (error) {
       console.error("Error al obtener alquiler", error);
+      setError("No se pudo cargar el alquiler");
     }
   }
 
   function handleTipoPagoChange(e) {
     const tipo = e.target.value;
     setForm((prev) => ({ ...prev, tipo_pago: tipo }));
+    setError("");
+    setAdvertencia("");
 
-    if (alquilerSeleccionado) {
-      if (tipo === "SALDO") {
-        setForm((prev) => ({ ...prev, monto: alquilerSeleccionado.monto_total || "" }));
-      } else if (tipo === "GARANTIA") {
+    if (!alquilerSeleccionado) return;
+
+    if (tipo === "SALDO") {
+      const saldoPendiente = Number(alquilerSeleccionado.monto_total || 0) - estadoPagos.totalPagado;
+      setForm((prev) => ({ ...prev, monto: Math.max(0, saldoPendiente).toString() }));
+    } else if (tipo === "GARANTIA") {
+      if (estadoPagos.garantiaCobrada) {
+        setAdvertencia("⚠️ La garantía ya fue cobrada anteriormente");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else if (estadoPagos.garantiaDevuelta) {
+        setAdvertencia("⚠️ La garantía ya fue devuelta, no se puede cobrar");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else if (estadoPagos.garantiaAplicada) {
+        setAdvertencia("⚠️ La garantía ya fue aplicada, no se puede cobrar");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else {
         setForm((prev) => ({ ...prev, monto: alquilerSeleccionado.garantia_monto || "" }));
+      }
+    } else if (tipo === "DEVOLUCION_GARANTIA") {
+      if (!estadoPagos.garantiaCobrada) {
+        setAdvertencia("⚠️ No se ha cobrado la garantía todavía");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else if (estadoPagos.garantiaAplicada) {
+        setAdvertencia("⚠️ La garantía ya fue aplicada a daños, no se puede devolver");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else if (estadoPagos.garantiaDevuelta) {
+        setAdvertencia("⚠️ La garantía ya fue devuelta anteriormente");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else {
+        setForm((prev) => ({ ...prev, monto: alquilerSeleccionado.garantia_monto || "" }));
+      }
+    } else if (tipo === "APLICACION_GARANTIA") {
+      if (!estadoPagos.garantiaCobrada) {
+        setAdvertencia("⚠️ No se ha cobrado la garantía todavía");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else if (estadoPagos.garantiaDevuelta) {
+        setAdvertencia("⚠️ La garantía ya fue devuelta, no se puede aplicar");
+        setForm((prev) => ({ ...prev, monto: "" }));
+      } else if (estadoPagos.garantiaAplicada) {
+        setAdvertencia("⚠️ La garantía ya fue aplicada anteriormente");
+        setForm((prev) => ({ ...prev, monto: "" }));
       } else {
         setForm((prev) => ({ ...prev, monto: "" }));
       }
+    } else {
+      setForm((prev) => ({ ...prev, monto: "" }));
     }
   }
 
@@ -156,6 +272,7 @@ function PagoForm() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    setAdvertencia("");
 
     if (!form.alquiler) {
       setError("Seleccioná un alquiler.");
@@ -165,6 +282,59 @@ function PagoForm() {
     if (!form.monto || Number(form.monto) <= 0) {
       setError("El monto debe ser mayor a cero.");
       return;
+    }
+
+    // Validaciones específicas por tipo
+    if (form.tipo_pago === "SALDO") {
+      if (Number(form.monto) > estadoPagos.saldoPendiente) {
+        setError(`El monto no puede ser mayor al saldo pendiente ($${estadoPagos.saldoPendiente.toLocaleString("es-AR")})`);
+        return;
+      }
+    }
+
+    if (form.tipo_pago === "GARANTIA") {
+      if (estadoPagos.garantiaCobrada) {
+        setError("La garantía ya fue cobrada. No se puede cobrar nuevamente.");
+        return;
+      }
+      if (estadoPagos.garantiaDevuelta) {
+        setError("La garantía ya fue devuelta. No se puede cobrar.");
+        return;
+      }
+      if (estadoPagos.garantiaAplicada) {
+        setError("La garantía ya fue aplicada. No se puede cobrar.");
+        return;
+      }
+    }
+
+    if (form.tipo_pago === "DEVOLUCION_GARANTIA") {
+      if (!estadoPagos.garantiaCobrada) {
+        setError("No se puede devolver la garantía porque no fue cobrada.");
+        return;
+      }
+      if (estadoPagos.garantiaAplicada) {
+        setError("No se puede devolver la garantía porque ya fue aplicada a daños.");
+        return;
+      }
+      if (estadoPagos.garantiaDevuelta) {
+        setError("La garantía ya fue devuelta anteriormente.");
+        return;
+      }
+    }
+
+    if (form.tipo_pago === "APLICACION_GARANTIA") {
+      if (!estadoPagos.garantiaCobrada) {
+        setError("No se puede aplicar la garantía porque no fue cobrada.");
+        return;
+      }
+      if (estadoPagos.garantiaDevuelta) {
+        setError("No se puede aplicar la garantía porque ya fue devuelta.");
+        return;
+      }
+      if (estadoPagos.garantiaAplicada) {
+        setError("La garantía ya fue aplicada anteriormente.");
+        return;
+      }
     }
 
     const payload = {
@@ -198,7 +368,6 @@ function PagoForm() {
 
   function copiarTexto(texto) {
     navigator.clipboard.writeText(texto);
-    // Podrías agregar un toast/notificación de "Copiado"
   }
 
   function enviarWhatsApp() {
@@ -207,14 +376,62 @@ function PagoForm() {
     window.open(url, '_blank');
   }
 
+  // Determinar si el tipo de pago está disponible
+  const tipoPagoDisponible = (tipo) => {
+    if (!alquilerSeleccionado) return true;
+    
+    // SALDO siempre disponible
+    if (tipo === "SALDO") return true;
+    
+    // Si se cobró la garantía, se bloquean DEVOLUCION y APLICACION
+    if (estadoPagos.garantiaCobrada) {
+      if (tipo === "DEVOLUCION_GARANTIA" || tipo === "APLICACION_GARANTIA") {
+        return false;
+      }
+    }
+    
+    // Si se devolvió la garantía, se bloquean GARANTIA y APLICACION
+    if (estadoPagos.garantiaDevuelta) {
+      if (tipo === "GARANTIA" || tipo === "APLICACION_GARANTIA") {
+        return false;
+      }
+    }
+    
+    // Si se aplicó la garantía, se bloquean GARANTIA y DEVOLUCION
+    if (estadoPagos.garantiaAplicada) {
+      if (tipo === "GARANTIA" || tipo === "DEVOLUCION_GARANTIA") {
+        return false;
+      }
+    }
+    
+    return true;
+  };
+
   const tipoSeleccionado = tiposAlquiler.find(t => t.value === form.tipo_pago);
   const IconoTipo = tipoSeleccionado?.icon || DollarSign;
+
+  // Función para obtener el texto del estado de la garantía
+  const obtenerEstadoGarantia = () => {
+    if (estadoPagos.garantiaDevuelta) {
+      return { texto: "Garantía devuelta al cliente", icono: CheckCircle2, color: "#8b5cf6" };
+    }
+    if (estadoPagos.garantiaAplicada) {
+      return { texto: "Garantía aplicada a daños", icono: AlertTriangle, color: "#ef4444" };
+    }
+    if (estadoPagos.garantiaCobrada) {
+      return { texto: "Garantía cobrada - Pendiente devolución o aplicación", icono: Info, color: "#f59e0b" };
+    }
+    return { texto: "Garantía no cobrada", icono: AlertCircle, color: "#94a3b8" };
+  };
+
+  const estadoGarantia = obtenerEstadoGarantia();
+  const EstadoIcono = estadoGarantia.icono;
 
   return (
     <Layout title="Registrar Pago de Alquiler">
       <div className="ent-card" style={{ maxWidth: '1200px', margin: '0 auto' }}>
         
-        {/* Header mejorado */}
+        {/* Header */}
         <div style={{ marginBottom: 32 }}>
           <button 
             onClick={() => navigate("/pagos")}
@@ -245,7 +462,7 @@ function PagoForm() {
                 Registrar Pago de Alquiler
               </h2>
               <p style={{ fontSize: 14, color: '#64748b', margin: 0 }}>
-                Registrá señas, saldos o garantías asociadas a un alquiler
+                Registrá saldos o garantías asociadas a un alquiler
               </p>
             </div>
 
@@ -411,7 +628,8 @@ function PagoForm() {
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                  gap: 20
+                  gap: 20,
+                  marginBottom: 16
                 }}>
                   <div>
                     <div style={{
@@ -482,6 +700,66 @@ function PagoForm() {
                     </div>
                   </div>
                 </div>
+
+                {/* Estado de pagos */}
+                <div style={{
+                  padding: 16,
+                  background: 'white',
+                  borderRadius: 8,
+                  border: '2px solid #e2e8f0'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 12
+                  }}>
+                    <Info size={16} color="#667eea" />
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>
+                      Estado de pagos
+                    </span>
+                  </div>
+
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                    gap: 12
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+                        Pagado del saldo
+                      </div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: '#10b981' }}>
+                        ${estadoPagos.totalPagado.toLocaleString("es-AR")}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+                        Saldo pendiente
+                      </div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: estadoPagos.saldoPendiente > 0 ? '#ef4444' : '#10b981' }}>
+                        ${estadoPagos.saldoPendiente.toLocaleString("es-AR")}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+                        Estado de garantía
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 14,
+                        fontWeight: 600
+                      }}>
+                        <EstadoIcono size={14} color={estadoGarantia.color} />
+                        <span style={{ color: estadoGarantia.color }}>{estadoGarantia.texto}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -549,8 +827,15 @@ function PagoForm() {
                   }}
                 >
                   {tiposAlquiler.map((t) => (
-                    <option key={t.value} value={t.value} style={{ color: '#1e293b' }}>
-                      {t.label}
+                    <option 
+                      key={t.value} 
+                      value={t.value} 
+                      style={{ 
+                        color: tipoPagoDisponible(t.value) ? '#1e293b' : '#94a3b8' 
+                      }}
+                      disabled={!tipoPagoDisponible(t.value)}
+                    >
+                      {t.label} {!tipoPagoDisponible(t.value) ? '(No disponible)' : ''}
                     </option>
                   ))}
                 </select>
@@ -566,6 +851,11 @@ function PagoForm() {
                   marginBottom: 8
                 }}>
                   Monto <span style={{ color: '#ef4444' }}>*</span>
+                  {form.tipo_pago === "SALDO" && estadoPagos.saldoPendiente > 0 && (
+                    <span style={{ fontSize: 12, color: '#10b981', fontWeight: 500, marginLeft: 8 }}>
+                      (Máx: ${estadoPagos.saldoPendiente.toLocaleString("es-AR")})
+                    </span>
+                  )}
                 </label>
                 <div style={{ position: 'relative' }}>
                   <span style={{
@@ -683,6 +973,26 @@ function PagoForm() {
                 </div>
               </div>
             </div>
+
+            {/* Advertencia de estado */}
+            {advertencia && (
+              <div style={{
+                marginTop: 16,
+                padding: 12,
+                background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                border: '2px solid #fcd34d',
+                borderRadius: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                color: '#92400e',
+                fontSize: 14,
+                fontWeight: 600
+              }}>
+                <AlertTriangle size={18} />
+                {advertencia}
+              </div>
+            )}
 
             {/* Info bancaria cuando es transferencia */}
             {form.metodo_pago === "TRANSFERENCIA" && (
@@ -823,148 +1133,153 @@ function PagoForm() {
                   ))}
                 </div>
 
-                          {/* Botón de WhatsApp */}
-                          <div style={{
-                            marginTop: 16,
-                            padding: 16,
-                            background: 'linear-gradient(135deg, #25d36615 0%, #25d36608 100%)',
-                            border: '2px solid #25d36630',
-                            borderRadius: 12,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            flexWrap: 'wrap',
-                            gap: 12
-                          }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>
-                                ¿Ya realizaste la transferencia?
-                              </div>
-                              <div style={{ fontSize: 13, color: '#64748b' }}>
-                                Enviá el comprobante por WhatsApp
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={enviarWhatsApp}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                padding: '12px 20px',
-                                background: '#25d366',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: 8,
-                                fontSize: 14,
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = '#1fb855'}
-                              onMouseLeave={(e) => e.currentTarget.style.background = '#25d366'}
-                            >
-                              <MessageCircle size={18} />
-                              Enviar comprobante
-                            </button>
-                          </div>
-                        </div>
-                      )}
-          
-                      {/* Notas */}
-                      <div style={{
-                        marginTop: 16,
-                        padding: 16,
-                        background: 'white',
-                        border: '2px solid #e2e8f0',
-                        borderRadius: 12
-                      }}>
-                        <label style={{
-                          display: 'block',
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: '#475569',
-                          marginBottom: 8
-                        }}>
-                          Notas (opcional)
-                        </label>
-                        <textarea
-                          name="notas"
-                          value={form.notas}
-                          onChange={handleChange}
-                          placeholder="Agregá una nota o referencia adicional"
-                          style={{
-                            width: '100%',
-                            minHeight: 100,
-                            padding: '12px 16px',
-                            fontSize: 14,
-                            color: '#1e293b',
-                            border: '2px solid #e2e8f0',
-                            borderRadius: 8,
-                            background: 'white',
-                            resize: 'vertical'
-                          }}
-                        />
-                      </div>
-          
-                      {/* Error */}
-                      {error && (
-                        <div style={{
-                          marginTop: 16,
-                          padding: 12,
-                          background: 'linear-gradient(135deg, #fff1f2 0%, #fee2e2 100%)',
-                          border: '2px solid #fecaca',
-                          borderRadius: 8,
-                          color: '#991b1b',
-                          fontWeight: 600
-                        }}>
-                          {error}
-                        </div>
-                      )}
-          
-                      {/* Acciones */}
-                      <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-                        <button
-                          type="button"
-                          onClick={() => navigate("/pagos")}
-                          style={{
-                            padding: '10px 16px',
-                            background: 'transparent',
-                            border: '2px solid #e2e8f0',
-                            borderRadius: 8,
-                            color: '#374151',
-                            fontWeight: 700,
-                            cursor: 'pointer'
-                          }}
-                        >
-                          Cancelar
-                        </button>
-          
-                        <button
-                          type="submit"
-                          disabled={saving || !cajaAbierta}
-                          style={{
-                            padding: '10px 16px',
-                            background: saving || !cajaAbierta ? '#94a3b8' : '#2563eb',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: 8,
-                            fontWeight: 700,
-                            cursor: saving || !cajaAbierta ? 'not-allowed' : 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8
-                          }}
-                        >
-                          {saving ? <Loader2 size={16} className="spin" /> : 'Registrar Pago'}
-                        </button>
-                      </div>
-          
+                {/* Botón de WhatsApp */}
+                <div style={{
+                  marginTop: 16,
+                  padding: 16,
+                  background: 'linear-gradient(135deg, #25d36615 0%, #25d36608 100%)',
+                  border: '2px solid #25d36630',
+                  borderRadius: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: 12
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>
+                      ¿Ya realizaste la transferencia?
                     </div>
-          
-                  </form>
+                    <div style={{ fontSize: 13, color: '#64748b' }}>
+                      Enviá el comprobante por WhatsApp
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={enviarWhatsApp}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '12px 20px',
+                      background: '#25d366',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: 8,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#1fb855'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = '#25d366'}
+                  >
+                    <MessageCircle size={18} />
+                    Enviar comprobante
+                  </button>
                 </div>
-              </Layout>
-            );
+              </div>
+            )}
+
+            {/* Notas */}
+            <div style={{
+              marginTop: 16,
+              padding: 16,
+              background: 'white',
+              border: '2px solid #e2e8f0',
+              borderRadius: 12
+            }}>
+              <label style={{
+                display: 'block',
+                fontSize: 13,
+                fontWeight: 600,
+                color: '#475569',
+                marginBottom: 8
+              }}>
+                Notas (opcional)
+              </label>
+              <textarea
+                name="notas"
+                value={form.notas}
+                onChange={handleChange}
+                placeholder="Agregá una nota o referencia adicional"
+                style={{
+                  width: '100%',
+                  minHeight: 100,
+                  padding: '12px 16px',
+                  fontSize: 14,
+                  color: '#1e293b',
+                  border: '2px solid #e2e8f0',
+                  borderRadius: 8,
+                  background: 'white',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div style={{
+                marginTop: 16,
+                padding: 12,
+                background: 'linear-gradient(135deg, #fff1f2 0%, #fee2e2 100%)',
+                border: '2px solid #fecaca',
+                borderRadius: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                color: '#991b1b',
+                fontWeight: 600
+              }}>
+                <AlertCircle size={18} />
+                {error}
+              </div>
+            )}
+
+            {/* Acciones */}
+            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button
+                type="button"
+                onClick={() => navigate("/pagos")}
+                style={{
+                  padding: '10px 16px',
+                  background: 'transparent',
+                  border: '2px solid #e2e8f0',
+                  borderRadius: 8,
+                  color: '#374151',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving || !cajaAbierta}
+                style={{
+                  padding: '10px 16px',
+                  background: saving || !cajaAbierta ? '#94a3b8' : '#2563eb',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 8,
+                  fontWeight: 700,
+                  cursor: saving || !cajaAbierta ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8
+                }}
+              >
+                {saving ? <Loader2 size={16} className="spin" /> : 'Registrar Pago'}
+              </button>
+            </div>
+
+          </div>
+
+        </form>
+      </div>
+    </Layout>
+  );
 }
+
 export default PagoForm;

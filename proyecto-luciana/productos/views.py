@@ -5,7 +5,8 @@ from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from rest_framework import status, viewsets
+
+from rest_framework import status, viewsets, filters
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -23,6 +24,10 @@ class ProductoViewSet(viewsets.ModelViewSet):
     serializer_class = ProductoSerializer
     permission_classes = [IsAuthenticated, SoloAdminEdita]
 
+    # Habilitamos búsqueda por nombre con ?search=
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre']
+
     # ====== DELETE con manejo de errores a 409 ======
     def destroy(self, request, *args, **kwargs):
         try:
@@ -32,12 +37,18 @@ class ProductoViewSet(viewsets.ModelViewSet):
             return Response({"detail": msg}, status=status.HTTP_409_CONFLICT)
         except ProtectedError:
             return Response(
-                {"detail": "No se puede eliminar el producto porque está referenciado por pedidos o alquileres."},
+                {
+                    "detail": "No se puede eliminar el producto porque está "
+                              "referenciado por pedidos o alquileres."
+                },
                 status=status.HTTP_409_CONFLICT
             )
         except IntegrityError:
             return Response(
-                {"detail": "No se puede eliminar el producto porque tiene movimientos asociados (pedidos/alquileres)."},
+                {
+                    "detail": "No se puede eliminar el producto porque tiene "
+                              "movimientos asociados (pedidos/alquileres)."
+                },
                 status=status.HTTP_409_CONFLICT
             )
 
@@ -51,7 +62,10 @@ class ProductoViewSet(viewsets.ModelViewSet):
         producto = self.get_object()
         producto.activo = not producto.activo
         producto.save(update_fields=["activo"])
-        return Response({"id": producto.id, "activo": producto.activo}, status=status.HTTP_200_OK)
+        return Response(
+            {"id": producto.id, "activo": producto.activo},
+            status=status.HTTP_200_OK
+        )
 
     # ====== /api/productos/<pk>/reservas/ ======
     @action(detail=True, methods=['get'], url_path='reservas')
@@ -95,21 +109,27 @@ class ProductoViewSet(viewsets.ModelViewSet):
             for d in dets:
                 p = d.pedido
                 try:
-                    nombre_cliente = getattr(p.cliente, 'nombre', None) or str(p.cliente)
+                    nombre_cliente = (
+                        getattr(p.cliente, 'nombre', None) or str(p.cliente)
+                    )
                 except Exception:
                     nombre_cliente = '—'
 
-                ini_iso, ini_ts = _iso_and_ts(getattr(p, 'fecha_hora_evento', None))
-                fin_iso, _      = _iso_and_ts(getattr(p, 'fecha_hora_devolucion', None))
+                ini_iso, ini_ts = _iso_and_ts(
+                    getattr(p, 'fecha_hora_evento', None)
+                )
+                fin_iso, _ = _iso_and_ts(
+                    getattr(p, 'fecha_hora_devolucion', None)
+                )
                 out.append({
                     "origen": "pedido",
                     "id_origen": p.id,
-                    "cliente":  nombre_cliente,
+                    "cliente": nombre_cliente,
                     "cantidad": int(getattr(d, 'cantidad', 0) or 0),
-                    "inicio":   ini_iso,
-                    "fin":      fin_iso,
-                    "estado":   getattr(p, 'estado', None),
-                    "_ts":      ini_ts,   # solo para ordenar
+                    "inicio": ini_iso,
+                    "fin": fin_iso,
+                    "estado": getattr(p, 'estado', None),
+                    "_ts": ini_ts,  # solo para ordenar
                 })
 
         # ---------- ALQUILERES ----------
@@ -124,11 +144,16 @@ class ProductoViewSet(viewsets.ModelViewSet):
             activos = ('pendiente', 'confirmado')
             dets = (
                 DetAlquiler.objects
-                .select_related('alquiler', 'producto', 'alquiler__cliente_fk', 'alquiler__pedido')
+                .select_related(
+                    'alquiler',
+                    'producto',
+                    'alquiler__cliente_fk',
+                    'alquiler__pedido'
+                )
                 .filter(
                     producto=producto,
                     alquiler__estado__in=activos,
-                    alquiler__pedido__isnull=True  # 👈 no duplicar si viene de un Pedido
+                    alquiler__pedido__isnull=True  # no duplicar si viene de un Pedido
                 )
             )
             for d in dets:
@@ -138,17 +163,21 @@ class ProductoViewSet(viewsets.ModelViewSet):
                 else:
                     nombre_cliente = getattr(a, 'cliente', '') or '—'
 
-                ini_iso, ini_ts = _iso_and_ts(getattr(a, 'fecha_inicio', None))
-                fin_iso, _      = _iso_and_ts(getattr(a, 'fecha_fin', None))
+                ini_iso, ini_ts = _iso_and_ts(
+                    getattr(a, 'fecha_inicio', None)
+                )
+                fin_iso, _ = _iso_and_ts(
+                    getattr(a, 'fecha_fin', None)
+                )
                 out.append({
                     "origen": "alquiler",
                     "id_origen": a.id,
-                    "cliente":  nombre_cliente,
+                    "cliente": nombre_cliente,
                     "cantidad": int(getattr(d, 'cantidad', 0) or 0),
-                    "inicio":   ini_iso,
-                    "fin":      fin_iso,
-                    "estado":   getattr(a, 'estado', None),
-                    "_ts":      ini_ts,   # solo para ordenar
+                    "inicio": ini_iso,
+                    "fin": fin_iso,
+                    "estado": getattr(a, 'estado', None),
+                    "_ts": ini_ts,  # solo para ordenar
                 })
 
         # Orden: inicio DESC por timestamp; luego limpiamos la clave interna
@@ -162,13 +191,19 @@ class ProductoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='disponibles')
     def disponibles(self, request):
         inicio = parse_datetime(request.query_params.get('inicio', ''))
-        fin    = parse_datetime(request.query_params.get('fin', ''))
+        fin = parse_datetime(request.query_params.get('fin', ''))
         if not inicio or not fin or fin <= inicio:
-            return Response({"detail": "Parámetros inválidos. Enviá ?inicio=ISO&fin=ISO"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Parámetros inválidos. Enviá ?inicio=ISO&fin=ISO"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         data = []
         for p in self.get_queryset().filter(activo=True):
-            disponible = p.disponible_en_rango(inicio, fin) if hasattr(p, 'disponible_en_rango') else p.stock_disponible
+            if hasattr(p, 'disponible_en_rango'):
+                disponible = p.disponible_en_rango(inicio, fin)
+            else:
+                disponible = p.stock_disponible
             p.disponible = disponible
             data.append(p)
 
@@ -180,10 +215,11 @@ class ProductoViewSet(viewsets.ModelViewSet):
         """
         GET /api/productos/?activo=true|false (opcional)
         GET /api/productos/?inicio=ISO&fin=ISO -> delega a /disponibles (solo activos)
+        + soporta ?search=... gracias a SearchFilter
         """
         # Si piden disponibilidad por rango, delegamos (manteniendo tu comportamiento)
         inicio = request.query_params.get('inicio')
-        fin    = request.query_params.get('fin')
+        fin = request.query_params.get('fin')
         if inicio and fin:
             return self.disponibles(request)
 

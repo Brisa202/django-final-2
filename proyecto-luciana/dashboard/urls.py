@@ -4,7 +4,7 @@ from .views import (
     RecentActivityView,
     MetricsChartView,
     PaymentDistributionView,
-    PaymentsFlowChartView,
+    PaymentsFlowChartView,      # 👈 nombre correcto de la vista
     DashboardStatsExtendedView,
 )
 
@@ -16,8 +16,9 @@ urlpatterns = [
     # Endpoints para gráficos
     path('metrics/chart/', MetricsChartView.as_view(), name='metrics-chart'),
     path('metrics/payment-distribution/', PaymentDistributionView.as_view(), name='payment-distribution'),
-    path('metrics/payments-flow/', PaymentsFlowChartView.as_view(), name='payments-flow'),
+    path('metrics/payments-flow/', PaymentsFlowChartView.as_view(), name='payments-flow'),  # 👈 usado acá también
 
-    # Estadísticas extendidas (opcional)
+    # Estadísticas extendidas
     path('metrics/extended/', DashboardStatsExtendedView.as_view(), name='metrics-extended'),
 ]
+

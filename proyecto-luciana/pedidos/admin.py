@@ -13,7 +13,7 @@ class PedidoAdmin(admin.ModelAdmin):
         "total", "senia", "garantia_monto", "garantia_estado",
         "costo_flete"  # Mostrar el costo de flete
     )
-    list_filter = ("estado", "fecha_hora_evento", "garantia_estado", "zona_entrega")  # Filtro por zona
+    list_filter = ("estado", "fecha_hora_evento", "garantia_estado")  # Filtro por zona
     search_fields = ("id", "cliente__nombre", "cliente__apellido")
     # 🔹 Si antes fallaba el admin por zonas horarias, mantenelo comentado
     # date_hierarchy = "fecha_hora_evento"
@@ -37,9 +37,7 @@ class PedidoAdmin(admin.ModelAdmin):
         }),
         ("Garantía", {
             "fields": ("garantia_monto", "garantia_estado")
-        }),
-        ("Entrega", {
-            "fields": ("zona_entrega",)  # Agregar zona de entrega en el admin
+         
         }),
     )
 

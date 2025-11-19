@@ -1,4 +1,3 @@
-#models.py/pagos#
 from django.db import models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -11,104 +10,101 @@ from alquileres.models import Alquiler
 class Pago(models.Model):
     """
     Modelo unificado para TODOS los movimientos de dinero.
-    Reemplaza completamente el registro manual en Caja.
+    Incluye ingresos, egresos, garantías y los nuevos tipos generales.
     """
-    
-    # ========== TIPOS DE PAGO ==========
+
+    # ----------- TIPOS DE PAGO -----------  
     TIPO_CHOICES = (
-        # INGRESOS de alquileres/pedidos
+        # --- TIPOS OPERATIVOS NUEVOS ---
+        ("ALQUILER", "Pago de Alquiler"),
+        ("COMPRA_INSUMOS", "Compra de Insumos"),
+        ("PAGO_TRABAJADORES", "Pago a Trabajadores"),
+        ("SERVICIOS", "Servicios"),
+        ("MANTENIMIENTO", "Mantenimiento"),
+        ("OTRO_MOVIMIENTO", "Otro Movimiento"),
+
+        # --- INGRESOS EXISTENTES ---
         ("SENIA", "Seña / Anticipo"),
         ("SALDO", "Saldo"),
         ("GARANTIA", "Garantía cobrada"),
         ("DEVOLUCION_TARDIA", "Cobro por devolución tardía"),
         ("OTRO_INGRESO", "Otro ingreso"),
-        
-        # EGRESOS de alquileres
+
+        # --- EGRESOS EXISTENTES ---
         ("DEVOLUCION_GARANTIA", "Devolución garantía"),
         ("APLICACION_GARANTIA", "Garantía aplicada a daños"),
         ("OTRO_EGRESO", "Otro egreso"),
     )
 
-    # ========== MEDIOS DE PAGO ==========
+    # ----------- MÉTODOS DE PAGO -----------  
     METODOS = (
         ("EFECTIVO", "Efectivo"),
         ("TRANSFERENCIA", "Transferencia"),
     )
 
-    # ========== SENTIDO (INGRESO/EGRESO) ==========
+    # ----------- INGRESO / EGRESO -----------  
     SENTIDO_CHOICES = (
         ("INGRESO", "Ingreso"),
         ("EGRESO", "Egreso"),
     )
 
-    # ========== ESTADOS DE GARANTÍA ==========
+    # ----------- ESTADOS GARANTÍA -----------  
     GARANTIA_ESTADOS = (
         ("PENDIENTE", "Pendiente"),
         ("DEVUELTA", "Devuelta"),
         ("APLICADA", "Aplicada"),
     )
 
-    # ========== CAMPOS ==========
+    # ----------- CAMPOS PRINCIPALES -----------  
     id_pago = models.AutoField(primary_key=True)
     fecha_pago = models.DateTimeField(default=timezone.now)
 
-    # Origen del pago (opcional, solo para pagos de alquileres/pedidos)
     pedido = models.ForeignKey(
         Pedido,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name="pagos",
+        related_name="pagos"
     )
+
     alquiler = models.ForeignKey(
         Alquiler,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name="pagos",
+        related_name="pagos"
     )
 
-    # Cliente (opcional, se infiere automáticamente de pedido/alquiler)
     cliente = models.ForeignKey(
         Cliente,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name="pagos",
+        related_name="pagos"
     )
 
-    # Clasificación del pago
     tipo_pago = models.CharField(max_length=30, choices=TIPO_CHOICES)
-    sentido = models.CharField(
-        max_length=10,
-        choices=SENTIDO_CHOICES,
-        default="INGRESO",
-    )
+    sentido = models.CharField(max_length=10, choices=SENTIDO_CHOICES, default="INGRESO")
 
-    # Importe y medio de pago
     monto = models.DecimalField(max_digits=12, decimal_places=2)
     metodo_pago = models.CharField(max_length=20, choices=METODOS)
 
-    # Referencia (para transferencias, nro operación, etc.)
     comprobante_pago = models.CharField(max_length=120, blank=True)
     notas = models.CharField(max_length=255, blank=True)
 
-    # Estado de garantía (solo para pagos tipo garantía)
     estado_garantia = models.CharField(
         max_length=20,
         choices=GARANTIA_ESTADOS,
         null=True,
-        blank=True,
+        blank=True
     )
-    
-    # ========== VINCULACIÓN CON CAJA ==========
+
     caja = models.ForeignKey(
         'caja.Caja',
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name="pagos",
-        help_text="Caja en la que se registró este pago"
+        related_name="pagos"
     )
 
     class Meta:
@@ -125,39 +121,38 @@ class Pago(models.Model):
             origen = "Extraordinario"
 
         return f"Pago #{self.id_pago} {self.get_tipo_pago_display()} ${self.monto} ({origen})"
-    
+
+    # ----------- VALIDACIONES -----------  
     def clean(self):
-        """Validaciones del modelo"""
         super().clean()
-        
-        # 1. Validar origen (pedido/alquiler) solo para tipos específicos
+
+        # TIPOS ANTIGUOS QUE REQUIEREN ORIGEN
         tipos_con_origen = [
-            "SENIA", "SALDO", "GARANTIA", 
+            "SENIA", "SALDO", "GARANTIA",
             "DEVOLUCION_GARANTIA", "APLICACION_GARANTIA"
         ]
-        
+
+        # ORIGEN obligatorio
         if self.tipo_pago in tipos_con_origen:
             if not self.pedido and not self.alquiler:
                 raise ValidationError(
                     f"El tipo '{self.get_tipo_pago_display()}' debe estar asociado a un Pedido o Alquiler."
                 )
             if self.pedido and self.alquiler:
-                raise ValidationError(
-                    "No se puede asociar el mismo pago a un Pedido y un Alquiler."
-                )
-        
-        # 2. Validar que SENIA solo se use con pedidos
+                raise ValidationError("No se puede asociar a Pedido y Alquiler al mismo tiempo.")
+
+        # SEÑA → solo pedidos
         if self.tipo_pago == "SENIA" and not self.pedido:
             raise ValidationError("Las señas deben estar asociadas a un Pedido.")
-        
-        # 3. Validar que garantías solo se usen con alquileres
+
+        # GARANTÍAS → solo alquileres
         tipos_garantia = ["GARANTIA", "DEVOLUCION_GARANTIA", "APLICACION_GARANTIA"]
         if self.tipo_pago in tipos_garantia and not self.alquiler:
             raise ValidationError(
                 f"El tipo '{self.get_tipo_pago_display()}' debe estar asociado a un Alquiler."
             )
-        
-        # 4. Asignar estado de garantía automático
+
+        # ESTADO GARANTÍA automático
         if self.tipo_pago == "GARANTIA":
             self.estado_garantia = self.estado_garantia or "PENDIENTE"
         elif self.tipo_pago == "DEVOLUCION_GARANTIA":
@@ -166,37 +161,40 @@ class Pago(models.Model):
             self.estado_garantia = "APLICADA"
         else:
             self.estado_garantia = None
-        
-        # 5. Asignar sentido automático según tipo
+
+        # SENTIDO automático
         TIPOS_INGRESO = {
-            "SENIA", "SALDO", "GARANTIA", "DEVOLUCION_TARDIA", "OTRO_INGRESO"
+            "SENIA", "SALDO", "GARANTIA", "DEVOLUCION_TARDIA", "OTRO_INGRESO",
+            "ALQUILER", "OTRO_MOVIMIENTO"  # ← tus nuevos ingresos posibles
         }
         TIPOS_EGRESO = {
-            "DEVOLUCION_GARANTIA", "APLICACION_GARANTIA", "OTRO_EGRESO"
+            "DEVOLUCION_GARANTIA", "APLICACION_GARANTIA", "OTRO_EGRESO",
+            "COMPRA_INSUMOS", "PAGO_TRABAJADORES", "SERVICIOS", "MANTENIMIENTO"
         }
-        
+
         if self.tipo_pago in TIPOS_INGRESO:
             self.sentido = "INGRESO"
         elif self.tipo_pago in TIPOS_EGRESO:
             self.sentido = "EGRESO"
-    
+
+    # ----------- SAVE -----------  
     def save(self, *args, **kwargs):
-        """Guarda el pago, infiriendo cliente y asignando a caja abierta"""
-        # Ejecutar validaciones
         self.full_clean()
-        
-        # Inferir cliente si no está definido
+
+        # Auto cliente
         if not self.cliente:
             if self.pedido:
-                self.cliente = getattr(self.pedido, 'cliente', None) or getattr(self.pedido, 'cliente_fk', None)
+                self.cliente = getattr(self.pedido, "cliente", None) or getattr(self.pedido, "cliente_fk", None)
             elif self.alquiler:
-                self.cliente = getattr(self.alquiler, 'cliente_fk', None) or getattr(self.alquiler, 'cliente', None)
-        
-        # Asignar a caja abierta si no está definida
+                self.cliente = getattr(self.alquiler, "cliente_fk", None) or getattr(self.alquiler, "cliente", None)
+
+        # Auto caja abierta
         if not self.caja_id:
             from caja.models import Caja
-            caja_abierta = Caja.objects.filter(estado='ABIERTA').first()
+            caja_abierta = Caja.objects.filter(estado="ABIERTA").first()
             if caja_abierta:
                 self.caja = caja_abierta
-        
+
         super().save(*args, **kwargs)
+
+

@@ -22,7 +22,7 @@ class PedidoCreateSerializer(serializers.Serializer):
     fecha_hora_evento = serializers.DateTimeField()
     fecha_hora_devolucion = serializers.DateTimeField()
 
-    # === CAMPOS DE ENTREGA === ✅ CORREGIDO
+    # === CAMPOS DE ENTREGA ===
     tipo_entrega = serializers.ChoiceField(
         choices=[('retiro', 'retiro'), ('envio', 'envio')],
         required=False,
@@ -38,8 +38,7 @@ class PedidoCreateSerializer(serializers.Serializer):
         required=False,
         allow_blank=True
     )
-    zona_entrega = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    
+
     # Económicos
     senia = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0)
     forma_pago = serializers.ChoiceField(
@@ -76,7 +75,7 @@ class PedidoCreateSerializer(serializers.Serializer):
     garantia_otro_url = serializers.URLField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        # Calcular automáticamente la garantía como el 15% del total si no se pasa un monto
+        # Calcular garantía automática si no se pasa
         if attrs.get("garantia_monto", 0) == 0:
             pedido_total = attrs.get('total', 0)
             attrs['garantia_monto'] = pedido_total * Decimal('0.15')
@@ -129,7 +128,6 @@ class PedidoOutSerializer(serializers.ModelSerializer):
             "tipo_entrega",
             "direccion_evento",
             "referencia_entrega",
-            "zona_entrega",  # 🆕 AGREGADO
             # ========================
             "total",
             "senia",
@@ -186,7 +184,6 @@ class PedidoDetailSerializer(serializers.ModelSerializer):
             "tipo_entrega",
             "direccion_evento",
             "referencia_entrega",
-            "zona_entrega",  # 🆕 AGREGADO
             # ========================
             "total",
             "senia",
@@ -218,7 +215,6 @@ class PedidoDetailSerializer(serializers.ModelSerializer):
             return ""
 
     # ---------- URLs absolutas ----------
-
     def _abs_url(self, field):
         request = self.context.get("request")
         if not request:
@@ -241,9 +237,6 @@ class PedidoDetailSerializer(serializers.ModelSerializer):
         return self._abs_url("garantia_otro_file")
 
     def get_garantia_monto_cobrado(self, obj):
-        """
-        Devuelve el monto realmente cobrado si el estado es 'descontada'.
-        """
         if getattr(obj, 'garantia_estado', '') == 'descontada':
             return float(getattr(obj, 'garantia_descuento', 0) or 0)
         return 0
@@ -263,7 +256,6 @@ class PedidoUpdateSerializer(serializers.ModelSerializer):
             "tipo_entrega",
             "direccion_evento",
             "referencia_entrega",
-            "zona_entrega",  # 🆕 AGREGADO
             # ========================
             "senia",
             "forma_pago",

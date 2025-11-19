@@ -2,100 +2,134 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
-
 from django.db.models import Sum
-from django.db.models.functions import TruncDate
 
 from .models import Pago
 from pedidos.models import Pedido
 from alquileres.models import Alquiler
 from incidentes.models import Incidente
-from .serializers import PagoSerializer, AlquilerSerializer
+from .serializers import PagoSerializer
 
 
 class PagoViewSet(ModelViewSet):
-    queryset = Pago.objects.all()
+    queryset = Pago.objects.all().order_by('-fecha_pago')   # 👈 CAMBIADO
     serializer_class = PagoSerializer
 
-    # 🟩 NUEVO: Endpoint para dashboard (flujo de pagos)
-    @action(detail=False, methods=['get'], url_path='flow')
-    def flow(self, request):
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+    # -----------------------------
+    # CREACIÓN PERSONALIZADA
+    # -----------------------------
+    def create(self, request, *args, **kwargs):
+        data = request.data.copy()
+        tipo_pago = data.get("tipo_pago")
 
-        # Validación
-        if not start_date or not end_date:
-            return Response(
-                {"detail": "start_date y end_date son requeridos"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        TIPOS_EGRESO = {
+            "DEVOLUCION_GARANTIA",
+            "APLICACION_GARANTIA",
+            "COMPRA_INSUMOS",
+            "COMPRA_MANTENIMIENTO",
+            "PAGO_PROVEEDOR",
+            "GASTO_GENERAL",
+            "OTRO_EGRESO",
+        }
 
-        # Consulta agrupada por día
-        pagos = (
-            Pago.objects.filter(fecha_pago__date__range=[start_date, end_date])
-            .annotate(day=TruncDate('fecha_pago'))
-            .values('day')
-            .annotate(total=Sum('monto'))
-            .order_by('day')
-        )
+        TIPOS_INGRESO = {
+            "SENIA",
+            "SALDO",
+            "GARANTIA",
+            "DEVOLUCION_TARDIA",
+            "OTRO_INGRESO",
+        }
 
-        # Respuesta para el dashboard
+        # SENTIDO
+        if tipo_pago in TIPOS_INGRESO:
+            data["sentido"] = "INGRESO"
+        elif tipo_pago in TIPOS_EGRESO:
+            data["sentido"] = "EGRESO"
+        else:
+            return Response({"error": "Tipo de pago inválido."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Ajuste de monto
+        try:
+            monto = float(data.get("monto", 0))
+        except:
+            return Response({"error": "Monto inválido"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if data["sentido"] == "EGRESO":
+            data["monto"] = -abs(monto)
+
+        if data["sentido"] == "INGRESO":
+            data["monto"] = abs(monto)
+
+        # Validación especial
+        if tipo_pago == "APLICACION_GARANTIA" and not data.get("incidente"):
+            return Response({"error": "Debe especificar un incidente."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # -----------------------------
+    # PAGOS POR PEDIDO
+    # -----------------------------
+    @action(detail=False, methods=["GET"])
+    def por_pedido(self, request):
+        pedido_id = request.query_params.get("pedido_id")
+
+        if not pedido_id:
+            return Response({"error": "Debe enviar pedido_id."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        pagos = Pago.objects.filter(pedido_id=pedido_id).order_by("-fecha_pago")
+        serializer = self.get_serializer(pagos, many=True)
+        return Response(serializer.data)
+
+    # -----------------------------
+    # PAGOS POR ALQUILER
+    # -----------------------------
+    @action(detail=False, methods=["GET"])
+    def por_alquiler(self, request):
+        alquiler_id = request.query_params.get("alquiler_id")
+
+        if not alquiler_id:
+            return Response({"error": "Debe enviar alquiler_id."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        pagos = Pago.objects.filter(alquiler_id=alquiler_id).order_by("-fecha_pago")
+        serializer = self.get_serializer(pagos, many=True)
+        return Response(serializer.data)
+
+    # -----------------------------
+    # PAGOS POR INCIDENTE
+    # -----------------------------
+    @action(detail=False, methods=["GET"])
+    def por_incidente(self, request):
+        incidente_id = request.query_params.get("incidente_id")
+
+        if not incidente_id:
+            return Response({"error": "Debe enviar incidente_id."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        pagos = Pago.objects.filter(incidente_id=incidente_id).order_by("-fecha_pago")
+        serializer = self.get_serializer(pagos, many=True)
+        return Response(serializer.data)
+
+    # -----------------------------
+    # RESUMEN
+    # -----------------------------
+    @action(detail=False, methods=["GET"])
+    def resumen(self, request):
+        ingresos = Pago.objects.filter(sentido="INGRESO").aggregate(total=Sum("monto"))["total"] or 0
+        egresos = Pago.objects.filter(sentido="EGRESO").aggregate(total=Sum("monto"))["total"] or 0
+
         return Response({
-            "start_date": start_date,
-            "end_date": end_date,
-            "chart_data": [
-                {"date": p["day"], "total": p["total"]} for p in pagos
-            ]
+            "ingresos": ingresos,
+            "egresos": abs(egresos),
+            "balance": ingresos + egresos
         })
 
-    # 🟨 Devolución de garantía
-    @action(detail=True, methods=['post'], url_path='devolucion_garantia')
-    def devolucion_garantia(self, request, pk=None):
-        alq = self.get_object()
 
-        if not alq.pedido_id:
-            return Response(
-                {'detail': 'Este alquiler no está vinculado a un pedido.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        incidentes = Incidente.objects.filter(
-            det_alquiler__alquiler=alq,
-            estado_incidente='resuelto',
-            resultado_final='repuesto',
-        )
-
-        total_incidentes = 0.0
-        for incidente in incidentes:
-            qty = float(incidente.cantidad_repuesta or incidente.cantidad_afectada or 0)
-            precio_unitario = float(incidente.det_alquiler.precio_unit or 0)
-            total_incidentes += qty * precio_unitario
-
-        garantia_monto = alq.garantia_monto or 0
-        monto_a_devolver = garantia_monto - total_incidentes
-
-        Pago.objects.create(
-            monto=monto_a_devolver,
-            tipo_pago="DEVOLUCION_GARANTIA",
-            metodo_pago="EFECTIVO",
-            estado_garantia="DEVUELTA",
-            alquiler=alq,
-            notas="Devolución de garantía con descuento por incidentes",
-        )
-
-        alq.garantia_estado = "DEVUELTA"
-        alq.save()
-
-        return Response(
-            {'detail': f'Garantía devuelta: ${monto_a_devolver}'},
-            status=status.HTTP_200_OK
-        )
-
-
-class AlquilerViewSet(ModelViewSet):
-    queryset = Alquiler.objects.all()
-    serializer_class = AlquilerSerializer
-
-    def get_queryset(self):
-        return Alquiler.objects.all().order_by('-id')
 

@@ -22,40 +22,12 @@ from .models import Pedido
 # CREAR PEDIDO
 # =========================================================
 class PedidoCreateView(APIView):
-    """
-    POST /api/pedidos/crear/
-
-    Espera form-data con:
-      - cliente_id
-      - fecha_hora_evento
-      - fecha_hora_devolucion
-      - tipo_entrega (retiro|envio)  
-      - direccion_evento
-      - referencia_entrega
-      - senia
-      - forma_pago
-      - comprobante_url / comprobante_file
-      - garantia_monto
-      - garantia_tipo (dni|servicio|otro)
-      - garantia_estado (pendiente|devuelta|descontada)
-      - garantia_dni_url / garantia_dni_file
-      - garantia_serv_url / garantia_serv_file
-      - garantia_otro_url / garantia_otro_file
-      - items -> JSON string: [{producto_id, cantidad}, ...]
-
-    Devuelve:
-      {
-        "pedido": { ...PedidoDetailSerializer },
-        "alquiler": { ...AlquilerSerializer }
-      }
-    """
     parser_classes = [JSONParser, MultiPartParser, FormParser]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # ✅ VALIDACIÓN: Verificar que haya una caja abierta
+        # Verificar caja abierta
         from caja.models import Caja
-        
         caja_abierta = Caja.objects.filter(estado='ABIERTA').first()
         if not caja_abierta:
             return Response(
@@ -65,10 +37,10 @@ class PedidoCreateView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         data = request.data.copy()
 
-        # "items" puede venir como string JSON en form-data
+        # convertir items JSON string
         if isinstance(data.get("items"), str):
             try:
                 data["items"] = json.loads(data["items"])
@@ -81,7 +53,7 @@ class PedidoCreateView(APIView):
         s = PedidoCreateSerializer(data=data)
         s.is_valid(raise_exception=True)
 
-        # 1) Crear pedido + alquiler base
+        # Crear pedido + alquiler
         ped, alq = crear_pedido_y_alquiler(
             cliente_id=s.validated_data["cliente_id"],
             items=s.validated_data["items"],
@@ -93,7 +65,7 @@ class PedidoCreateView(APIView):
             comprobante_file=request.FILES.get("comprobante_file"),
         )
 
-        # 2) Completar garantía en el Pedido recién creado
+        # Completar garantía
         for field in [
             "garantia_monto",
             "garantia_tipo",
@@ -106,7 +78,7 @@ class PedidoCreateView(APIView):
             if val not in (None, ""):
                 setattr(ped, field, val)
 
-        # Archivos de garantía
+        # Archivos garantía
         files = {
             "garantia_dni_file": request.FILES.get("garantia_dni_file"),
             "garantia_serv_file": request.FILES.get("garantia_serv_file"),
@@ -116,30 +88,25 @@ class PedidoCreateView(APIView):
             if f:
                 setattr(ped, model_field, f)
 
-  # 3) Guardar tipo de entrega, dirección y ZONA
+        # ====================
+        # ENTREGA Y FLETE MANUAL
+        # ====================
         ped.tipo_entrega = s.validated_data.get("tipo_entrega", "retiro")
         ped.direccion_evento = s.validated_data.get("direccion_evento", "")
         ped.referencia_entrega = s.validated_data.get("referencia_entrega", "")
-        
-        # 🆕 CALCULAR FLETE: Si es envío y hay zona, calcular el costo del flete
-        zona_entrega = s.validated_data.get("zona_entrega")
-        if ped.tipo_entrega == "envio" and zona_entrega:
-            ped.zona_entrega = zona_entrega
-            ped.calcular_costo_flete()  # Esto asigna el costo según la zona
 
-        # ⚠️ NO calcular garantía aquí, ya viene correcta del frontend (15% solo de productos)
-        # El frontend calcula: garantia = totalProductos * 0.15 (sin incluir flete)
+        # 🆕 COSTO FLETE MANUAL (NUMÉRICO)
+        ped.costo_flete = s.validated_data.get("costo_flete", 0)
 
         ped.save()
 
-        # 4) Registrar automáticamente la SEÑA como Pago (si hay monto)
+        # Registrar seña automática
         from pagos.models import Pago
 
         senia = s.validated_data.get("senia")
         forma_pago = (s.validated_data.get("forma_pago") or "").upper()
         comprobante_url = s.validated_data.get("comprobante_url") or ""
 
-        # Normalizamos método de pago
         if "TRANS" in forma_pago:
             metodo_pago = "TRANSFERENCIA"
         else:
@@ -163,7 +130,6 @@ class PedidoCreateView(APIView):
                 notas="Seña registrada automáticamente al crear el pedido",
             )
 
-        # 5) Respuesta
         return Response(
             {
                 "pedido": PedidoDetailSerializer(
@@ -194,13 +160,6 @@ class PedidoCancelarView(APIView):
 # CRUD COMPLETO DE PEDIDOS
 # =========================================================
 class PedidoViewSet(viewsets.ModelViewSet):
-    """
-    /api/pedidos/            -> list (PedidoOutSerializer)
-    /api/pedidos/{id}/       -> retrieve (PedidoDetailSerializer)
-    /api/pedidos/{id}/PUT    -> update (PedidoUpdateSerializer)
-    /api/pedidos/{id}/PATCH  -> partial_update (PedidoUpdateSerializer)
-    /api/pedidos/{id}/DELETE -> permitido SOLO si está cancelado o entregado
-    """
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
@@ -227,7 +186,6 @@ class PedidoViewSet(viewsets.ModelViewSet):
         context["request"] = self.request
         return context
 
-    # Override update para devolver detalle completo
     def update(self, request, *args, **kwargs):
         return self._actualizar_y_devolver_detalle(
             request, partial=False, *args, **kwargs
@@ -251,7 +209,6 @@ class PedidoViewSet(viewsets.ModelViewSet):
         ).data
         return Response(detalle, status=status.HTTP_200_OK)
 
-    # Solo permite borrar pedidos cancelados o entregados
     def destroy(self, request, *args, **kwargs):
         pedido = self.get_object()
 
@@ -269,4 +226,3 @@ class PedidoViewSet(viewsets.ModelViewSet):
             {"detail": f"Pedido #{pedido_id} eliminado correctamente."},
             status=status.HTTP_204_NO_CONTENT,
         )
-

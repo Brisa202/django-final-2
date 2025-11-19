@@ -19,10 +19,9 @@ class Pedido(models.Model):
         ('envio', 'Envío a domicilio'),
     )
 
-    # Zona de entrega
-    zona_entrega = models.CharField(max_length=100, blank=True, null=True)
+    # ❌ zona_entrega eliminado
 
-    # Costo del flete
+    # Costo del flete (el admin lo escribirá a mano)
     costo_flete = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     cliente = models.ForeignKey(
@@ -62,7 +61,7 @@ class Pedido(models.Model):
     senia = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     forma_pago = models.CharField(max_length=40, blank=True)
 
-    # ------------------- Comprobante de SEÑA (opcional) -------------------
+    # ------------------- Comprobante de SEÑA -------------------
     comprobante_url = models.URLField(blank=True)
     comprobante_file = models.ImageField(
         upload_to='comprobantes/senia/',
@@ -142,10 +141,6 @@ class Pedido(models.Model):
 
     @property
     def saldo(self):
-        """
-        Saldo pendiente = total + cargos - (seña + pagos)
-        Nunca negativo.
-        """
         return max(
             self.total + self.total_cargos - (self.senia + self.total_pagos),
             Decimal('0')
@@ -153,10 +148,7 @@ class Pedido(models.Model):
 
     @property
     def garantia_comprobante_provisto(self) -> bool:
-        """
-        ¿Hay algún comprobante de garantía subido o linkeado?
-        """
-        return any([  # Verifica si hay algún comprobante de garantía
+        return any([
             self.garantia_dni_url, self.garantia_dni_file,
             self.garantia_serv_url, self.garantia_serv_file,
             self.garantia_otro_url, self.garantia_otro_file,
@@ -166,9 +158,6 @@ class Pedido(models.Model):
         return self.estado in ('entregado', 'cancelado')
 
     def can_edit(self) -> bool:
-        """
-        Editable hasta 72h antes del evento.
-        """
         if not self.fecha_hora_evento:
             return True
         now = datetime.now(timezone.utc) if self.fecha_hora_evento.tzinfo else datetime.utcnow()
@@ -177,34 +166,14 @@ class Pedido(models.Model):
     def __str__(self):
         return f"Pedido #{self.pk} — {self.cliente}"
 
-    def calcular_costo_flete(self):
-        """
-        Calcula el costo del flete según la zona de entrega seleccionada
-        y actualiza el campo `costo_flete` del pedido.
-        """
-        precios_zona = {
-            'Zona Sur': 5500,       # Zona Sur, más alejada
-            'Zona Norte': 3000,     # Zona Norte
-            'Zona Oeste': 4000,     # Zona Oeste
-            'Zona Este': 5000,      # Zona Este
-            'Zona Macrocentro': 2800,  # Zona más cercana al centro
-        }
-
-        # Asignar el costo de flete según la zona
-        if self.zona_entrega:
-            self.costo_flete = precios_zona.get(self.zona_entrega, 0)  # Si no encuentra la zona, asigna 0
-        self.save()
+    # ❌ función calcular_costo_flete eliminada
 
     def calcular_garantia(self):
-        """
-        Calcula el monto de la garantía como el 15% del total del pedido.
-        Si no se pasa un monto, se calcula automáticamente.
-        """
-        if self.garantia_monto == 0:  # Si no se ha proporcionado un monto, se calcula el 15%
+        if self.garantia_monto == 0:
             self.garantia_monto = self.total * Decimal('0.15')
         self.save()
 
-# Detalle de los productos en el pedido (tabla intermedia)
+
 class DetPedido(models.Model):
     pedido = models.ForeignKey(
         Pedido,

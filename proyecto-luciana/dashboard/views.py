@@ -11,7 +11,7 @@ from decimal import Decimal
 from pedidos.models import Pedido
 from alquileres.models import Alquiler, Cargo
 from incidentes.models import Incidente
-from pagos.models import Pago # Asegurado el import para todas las vistas que lo usan
+from pagos.models import Pago  # 👈 Import para el gráfico de pagos
 
 
 class MetricsSummaryView(APIView):
@@ -23,7 +23,6 @@ class MetricsSummaryView(APIView):
         year, month = now.year, now.month
 
         # 💰 Calcular Balance Total de Caja (INGRESOS - EGRESOS)
-        
         ingresos_totales = Pago.objects.filter(
             sentido='INGRESO'
         ).aggregate(total=Sum('monto'))['total'] or Decimal('0')
@@ -339,8 +338,10 @@ class DashboardStatsExtendedView(APIView):
 
 class PaymentsFlowChartView(APIView):
     """
-    ✅ CORREGIDO: Gráfico de flujo de caja basado en PAGOS (modelo Pago).
-    Filtra los pagos por fecha usando un rango inclusivo y devuelve los totales generales.
+    Gráfico de flujo de caja basado en PAGOS (modelo Pago).
+    - Usa fecha_pago
+    - Filtra por rango de fechas [start_date, end_date] inclusive
+    - Devuelve totales de ingresos y egresos + datos diarios para gráfico
     """
     permission_classes = [IsAuthenticated]
 
@@ -354,95 +355,101 @@ class PaymentsFlowChartView(APIView):
             }, status=400)
 
         try:
-            # 1. Convertimos la fecha de inicio a datetime (00:00:00)
-            start_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
-            
-            # 2. Definimos el LÍMITE SUPERIOR: el inicio del DÍA SIGUIENTE
-            end_date_obj = datetime.strptime(end_date_str, '%Y-%m-%d')
-            end_boundary_dt = end_date_obj + timedelta(days=1)
-            
+            # Parseamos como date
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
         except ValueError:
             return Response({
                 "error": "Formato de fecha inválido. Use YYYY-MM-DD"
             }, status=400)
 
+        if start_date > end_date:
+            return Response({
+                "error": "La fecha de inicio no puede ser mayor a la fecha de fin"
+            }, status=400)
 
-        # Filtro base: fecha_pago >= start_dt AND fecha_pago < end_boundary_dt
+        # Hacemos datetimes aware con la zona de Django
+        start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+        end_boundary_dt = timezone.make_aware(
+            datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        )
+
         base_filter = Q(
-            fecha_pago__gte=start_dt, 
+            fecha_pago__gte=start_dt,
             fecha_pago__lt=end_boundary_dt
         )
-        
-        # 💰 1. Agregación para OBTENER LOS TOTALES GENERALES DEL PERÍODO (Tu objetivo principal)
+
+        # 1️⃣ Totales generales del período
         totals = Pago.objects.filter(base_filter).aggregate(
             total_ingresos=Sum('monto', filter=Q(sentido='INGRESO')),
-            total_egresos=Sum('monto', filter=Q(sentido='EGRESO'))
+            total_egresos=Sum('monto', filter=Q(sentido='EGRESO')),
         )
-        
+
         total_ingresos_general = float(totals['total_ingresos'] or 0)
         total_egresos_general = float(totals['total_egresos'] or 0)
 
+        # 2️⃣ Datos diarios para gráfico
 
-        # 📊 2. Consultas para datos diarios (para el gráfico)
-        
-        # INGRESOS: Pagos con sentido INGRESO
-        ingresos_query = Pago.objects.filter(
-            base_filter, 
-            sentido='INGRESO'
-        ).annotate(
-            fecha=TruncDate('fecha_pago')
-        ).values('fecha').annotate(
-            total_ingresos=Sum('monto')
-        ).order_by('fecha')
+        # Ingresos
+        ingresos_query = (
+            Pago.objects
+            .filter(base_filter, sentido='INGRESO')
+            .annotate(fecha=TruncDate('fecha_pago'))
+            .values('fecha')
+            .annotate(total_ingresos=Sum('monto'))
+            .order_by('fecha')
+        )
 
-        # EGRESOS: Pagos con sentido EGRESO
-        egresos_query = Pago.objects.filter(
-            base_filter, 
-            sentido='EGRESO'
-        ).annotate(
-            fecha=TruncDate('fecha_pago')
-        ).values('fecha').annotate(
-            total_egresos=Sum('monto')
-        ).order_by('fecha')
-        
-        # Crear diccionario de fechas para combinar datos
+        # Egresos
+        egresos_query = (
+            Pago.objects
+            .filter(base_filter, sentido='EGRESO')
+            .annotate(fecha=TruncDate('fecha_pago'))
+            .values('fecha')
+            .annotate(total_egresos=Sum('monto'))
+            .order_by('fecha')
+        )
+
         data_dict = {}
-        
+
         # Agregar ingresos
         for item in ingresos_query:
             fecha = item['fecha']
+            if fecha is None:
+                # Evita AttributeError si algo viene raro
+                continue
             data_dict[fecha] = {
                 'fecha': fecha.strftime('%Y-%m-%d'),
                 'ingresos': float(item['total_ingresos'] or 0),
-                'egresos': 0
+                'egresos': 0.0,
             }
-        
+
         # Agregar egresos
         for item in egresos_query:
             fecha = item['fecha']
+            if fecha is None:
+                continue
             if fecha not in data_dict:
                 data_dict[fecha] = {
                     'fecha': fecha.strftime('%Y-%m-%d'),
-                    'ingresos': 0,
-                    'egresos': 0
+                    'ingresos': 0.0,
+                    'egresos': 0.0,
                 }
             data_dict[fecha]['egresos'] = float(item['total_egresos'] or 0)
 
-        # Convertir a lista ordenada
         chart_data = [
             {
                 'fecha': v['fecha'],
                 'ingresos': round(v['ingresos'], 2),
-                'egresos': round(v['egresos'], 2)
+                'egresos': round(v['egresos'], 2),
             }
-            for k, v in sorted(data_dict.items())
+            for _, v in sorted(data_dict.items())
         ]
 
-        # Devolvemos los datos diarios Y los totales generales.
         return Response({
             "chart_data": chart_data,
             "start_date": start_date_str,
             "end_date": end_date_str,
-            "total_ingresos": total_ingresos_general, # Nuevos campos
-            "total_egresos": total_egresos_general,  # Nuevos campos
+            "total_ingresos": total_ingresos_general,
+            "total_egresos": total_egresos_general,
         })

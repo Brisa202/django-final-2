@@ -8,35 +8,14 @@ import {
   Shield,
   Upload,
   AlertCircle,
-  MessageCircle,
   Loader2,
   MapPin,
   Truck,
   Package,
+  X,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { error, success, confirm } from './alerts';
-
-// Información de cuentas bancarias
-const CUENTAS_BANCARIAS = [
-  {
-    id: 1,
-    banco: 'Banco Naranja X',
-    alias: 'Bri1925',
-    cbu: '4530000800017698619478',
-    titular: 'Brisa Itzel Michel',
-    color: '#ff6b00'
-  },
-  {
-    id: 2,
-    banco: 'Banco Macro',
-    alias: 'MACRO.BRISA',
-    cbu: '2850590940090418420001',
-    titular: 'Brisa Itzel Michel',
-    color: '#0066cc'
-  }
-];
-
-const WHATSAPP_NUMBER = '543875130659';
 
 export default function OrderCreateStep2() {
   const navigate = useNavigate();
@@ -53,22 +32,29 @@ export default function OrderCreateStep2() {
   const fechaEntrega = state?.fechaEntrega || '';
   const devolucion = state?.devolucion || '';
   const items = state?.items || [];
-  const totalProductos = state?.total || 0; // 🆕 Solo productos
-  const totalConFlete = state?.totalConFlete || 0; // 🆕 Productos + flete
-  const costoFlete = state?.costoFlete || 0; // 🆕
-  const garantiaCalculada = state?.garantia || 0; // 🆕 15% del total con flete
+  const totalProductos = state?.total || 0;
+  const totalConFlete = state?.totalConFlete || 0;
+  const costoFlete = state?.costoFlete || 0;
+  const garantiaCalculada = state?.garantia || 0;
   const tipoServicio = state?.tipoServicio || 'RETIRO';
   const direccionPaso1 = state?.direccionEntrega || '';
   const referenciaPaso1 = state?.referenciaEntrega || '';
-  const zonaEntrega = state?.zonaEntrega || ''; // 🆕
+  const zonaEntrega = state?.zonaEntrega || '';
+
+  // Imagen de seña del paso 1
+  const imagenSenaPaso1 = state?.imagenSena || null;
+  const previewSenaPaso1 = state?.previewSena || null;
 
   // seña / pago
   const [senia, setSenia] = useState('');
   const [autoSenia, setAutoSenia] = useState(true);
   const [formaPago, setFormaPago] = useState('');
-  const [comprobanteFile, setComprobanteFile] = useState(null);
+  
+  // Imagen de seña (local en este paso si se cambia)
+  const [imagenSena, setImagenSena] = useState(imagenSenaPaso1);
+  const [previewSena, setPreviewSena] = useState(previewSenaPaso1);
 
-  // garantía - 🆕 Usar garantía calculada del 15%
+  // garantía
   const [garantiaMonto, setGarantiaMonto] = useState('');
   const [autoGarantia, setAutoGarantia] = useState(true);
   const [garantiaEstado, setGarantiaEstado] = useState('pendiente');
@@ -90,17 +76,49 @@ export default function OrderCreateStep2() {
   const [entregaErrs, setEntregaErrs] = useState({});
   const [savingEntrega, setSavingEntrega] = useState(false);
 
-  // 🆕 Calcular seña en base al total CON flete, garantía solo sobre productos
+  // Calcular seña y garantía automáticas
   useEffect(() => {
     if (autoSenia) {
       const calc = (Number(totalConFlete) * 0.2).toFixed(2);
       setSenia(isNaN(calc) ? '0.00' : calc);
     }
     if (autoGarantia) {
-      // ✅ Garantía del 15% SOLO sobre productos (SIN flete)
       setGarantiaMonto(garantiaCalculada.toFixed(2));
     }
   }, [totalConFlete, garantiaCalculada, autoSenia, autoGarantia]);
+
+  // Manejar cambio de imagen de seña
+  const handleImagenSenaChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validar tipo de archivo
+    if (!file.type.startsWith('image/')) {
+      error({ title: 'El archivo debe ser una imagen' });
+      return;
+    }
+
+    // Validar tamaño (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      error({ title: 'La imagen no puede superar los 5MB' });
+      return;
+    }
+
+    setImagenSena(file);
+
+    // Crear preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setPreviewSena(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Eliminar imagen de seña
+  const handleRemoveImagenSena = () => {
+    setImagenSena(null);
+    setPreviewSena(null);
+  };
 
   const validateStep2 = () => {
     const e = {};
@@ -140,7 +158,7 @@ export default function OrderCreateStep2() {
       const itemsPayload = items.map((it) => ({
         producto_id: Number(it.producto),
         cantidad: Number(it.cantidad),
-        precio_unit: Number(it.precio_unit || 0)
+        precio_unit: Number(it.precio_unit || 0),
       }));
 
       const form = new FormData();
@@ -152,16 +170,18 @@ export default function OrderCreateStep2() {
           new Date(fechaEntrega).toISOString()
         );
       }
-      form.append('fecha_hora_devolucion', new Date(devolucion).toISOString());
+      form.append(
+        'fecha_hora_devolucion',
+        new Date(devolucion).toISOString()
+      );
 
-      // ✅ Tipo de servicio y dirección
-      form.append('tipo_entrega', tipoServicio === 'ENTREGA' ? 'envio' : 'retiro');
-      
-      // 🆕 Si es ENTREGA, enviar zona y dirección
+      // Tipo de servicio y dirección
+      form.append(
+        'tipo_entrega',
+        tipoServicio === 'ENTREGA' ? 'envio' : 'retiro'
+      );
+
       if (tipoServicio === 'ENTREGA') {
-        if (zonaEntrega) {
-          form.append('zona_entrega', zonaEntrega);
-        }
         if (direccionPaso1) {
           form.append('direccion_evento', direccionPaso1);
         }
@@ -174,8 +194,9 @@ export default function OrderCreateStep2() {
       form.append('senia', String(Number(senia || 0)));
       form.append('forma_pago', formaPago || 'efectivo');
 
-      if (comprobanteFile) {
-        form.append('comprobante_file', comprobanteFile);
+      // Imagen de seña
+      if (imagenSena) {
+        form.append('comprobante_sena', imagenSena);
       }
 
       // Garantía
@@ -205,12 +226,13 @@ export default function OrderCreateStep2() {
         setShowEntregaModal(true);
         await success({
           title: 'Pedido creado',
-          message: 'El pedido fue registrado. Ahora completá los datos de entrega.'
+          message:
+            'El pedido fue registrado. Ahora completá los datos de entrega.',
         });
       } else {
         await success({
           title: 'Pedido creado',
-          message: 'El pedido fue registrado correctamente.'
+          message: 'El pedido fue registrado correctamente.',
         });
         navigate('/pedidos', { replace: true, state: { created: true } });
       }
@@ -242,7 +264,7 @@ export default function OrderCreateStep2() {
 
       await success({
         title: 'Entrega registrada',
-        message: 'Se guardó la dirección y los datos de entrega.'
+        message: 'Se guardó la dirección y los datos de entrega.',
       });
 
       setShowEntregaModal(false);
@@ -253,7 +275,7 @@ export default function OrderCreateStep2() {
         : err.message;
       error({
         title: 'No se pudo guardar la entrega',
-        message: backendMsg
+        message: backendMsg,
       });
     } finally {
       setSavingEntrega(false);
@@ -272,8 +294,8 @@ export default function OrderCreateStep2() {
       garantiaMonto ||
       garantiaEstado !== 'pendiente' ||
       garantiaTipo !== 'dni' ||
-      comprobanteFile ||
-      garantiaFile;
+      garantiaFile ||
+      imagenSena;
 
     if (hayDatos) {
       const ok = await confirm({
@@ -282,24 +304,12 @@ export default function OrderCreateStep2() {
           'Si cancelás ahora se perderán los datos de pago y garantía cargados.',
         okText: 'Sí, salir',
         cancelText: 'Seguir editando',
-        tone: 'warn'
+        tone: 'warn',
       });
       if (!ok) return;
     }
     navigate('/pedidos');
   };
-
-  function copiarTexto(texto) {
-    navigator.clipboard.writeText(texto);
-  }
-
-  function enviarWhatsApp() {
-    const mensaje = `Hola! Necesito enviar un comprobante de pago del pedido.\n\nTotal: $${totalConFlete}`;
-    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(
-      mensaje
-    )}`;
-    window.open(url, '_blank');
-  }
 
   const getGarantiaFileName = () => {
     if (!garantiaFile) return 'Seleccionar archivo';
@@ -450,6 +460,47 @@ export default function OrderCreateStep2() {
       borderRadius: 999,
       cursor: 'pointer',
     },
+    uploadButton: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '10px 18px',
+      fontSize: 14,
+      fontWeight: 500,
+      background: '#f3f4f6',
+      color: '#374151',
+      border: '2px dashed #d1d5db',
+      borderRadius: 8,
+      cursor: 'pointer',
+      transition: 'all 0.2s',
+    },
+    imagePreviewContainer: {
+      marginTop: 12,
+      position: 'relative',
+      display: 'inline-block',
+    },
+    imagePreview: {
+      maxWidth: '300px',
+      maxHeight: '200px',
+      borderRadius: 8,
+      border: '2px solid #e5e7eb',
+    },
+    removeImageButton: {
+      position: 'absolute',
+      top: -8,
+      right: -8,
+      background: '#ef4444',
+      color: 'white',
+      border: 'none',
+      borderRadius: '50%',
+      width: 28,
+      height: 28,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      cursor: 'pointer',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+    },
   };
 
   return (
@@ -460,7 +511,11 @@ export default function OrderCreateStep2() {
           <div style={styles.headerRow}>
             <button
               type="button"
-              onClick={() => navigate('/pedidos/nuevo', { state })}
+              onClick={() => navigate('/pedidos/nuevo', { state: {
+                ...state,
+                imagenSena,
+                previewSena,
+              }})}
               style={styles.backLink}
             >
               <ArrowLeft size={16} />
@@ -486,39 +541,74 @@ export default function OrderCreateStep2() {
             <div style={styles.alertError}>
               <AlertCircle size={20} style={{ flexShrink: 0, marginTop: 2 }} />
               <div>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Error en el formulario</div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Error en el formulario
+                </div>
                 <div style={{ fontSize: 14 }}>{msg}</div>
               </div>
             </div>
           )}
 
           <form onSubmit={handleGuardar}>
-            {/* 🆕 Resumen mejorado */}
+            {/* Resumen del pedido */}
             <div style={styles.cardSection}>
               <div style={styles.sectionTitle}>Resumen del pedido</div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 16,
+                }}
+              >
                 <div style={styles.grid2}>
                   <div>
-                    <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: '#6b7280',
+                        fontWeight: 600,
+                        marginBottom: 4,
+                      }}
+                    >
                       CLIENTE ID
                     </div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 700,
+                        color: '#111827',
+                      }}
+                    >
                       #{clienteId}
                     </div>
                   </div>
 
                   <div>
-                    <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: '#6b7280',
+                        fontWeight: 600,
+                        marginBottom: 4,
+                      }}
+                    >
                       PRODUCTOS
                     </div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>
-                      {items.length} {items.length === 1 ? 'producto' : 'productos'}
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 700,
+                        color: '#111827',
+                      }}
+                    >
+                      {items.length}{' '}
+                      {items.length === 1 ? 'producto' : 'productos'}
                     </div>
                   </div>
                 </div>
 
-                {/* 🆕 Desglose de totales */}
+                {/* Desglose de totales */}
                 <div
                   style={{
                     padding: 20,
@@ -527,15 +617,42 @@ export default function OrderCreateStep2() {
                     border: '2px solid #e5e7eb',
                   }}
                 >
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                    }}
+                  >
                     {/* Subtotal productos */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 14, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 14,
+                          color: '#6b7280',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
                         <Package size={16} />
                         Subtotal productos:
                       </span>
-                      <span style={{ fontSize: 15, fontWeight: 600, color: '#111827' }}>
-                        ${Number(totalProductos || 0).toLocaleString('es-AR', {
+                      <span
+                        style={{
+                          fontSize: 15,
+                          fontWeight: 600,
+                          color: '#111827',
+                        }}
+                      >
+                        $
+                        {Number(totalProductos || 0).toLocaleString('es-AR', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                         })}
@@ -545,36 +662,82 @@ export default function OrderCreateStep2() {
                     {/* Costo de flete */}
                     {tipoServicio === 'ENTREGA' && costoFlete > 0 && (
                       <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: 14, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 14,
+                              color: '#6b7280',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
                             <Truck size={16} />
-                            Flete ({zonaEntrega}):
+                            Flete
+                            {zonaEntrega ? ` (${zonaEntrega})` : ''}:
                           </span>
-                          <span style={{ fontSize: 15, fontWeight: 600, color: '#4338ca' }}>
-                            ${costoFlete.toLocaleString('es-AR', {
+                          <span
+                            style={{
+                              fontSize: 15,
+                              fontWeight: 600,
+                              color: '#4338ca',
+                            }}
+                          >
+                            $
+                            {costoFlete.toLocaleString('es-AR', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
                             })}
                           </span>
                         </div>
-                        <div style={{ borderTop: '1px solid #e5e7eb', margin: '4px 0' }} />
+                        <div
+                          style={{
+                            borderTop: '1px solid #e5e7eb',
+                            margin: '4px 0',
+                          }}
+                        />
                       </>
                     )}
 
                     {/* Total */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 16,
+                          fontWeight: 700,
+                          color: '#111827',
+                        }}
+                      >
                         Total del pedido:
                       </span>
-                      <span style={{ fontSize: 22, fontWeight: 800, color: '#c9a961' }}>
-                        ${Number(totalConFlete || 0).toLocaleString('es-AR', {
+                      <span
+                        style={{
+                          fontSize: 22,
+                          fontWeight: 800,
+                          color: '#c9a961',
+                        }}
+                      >
+                        $
+                        {Number(totalConFlete || 0).toLocaleString('es-AR', {
                           minimumFractionDigits: 2,
-                          maximumFractionDigits: 2
+                          maximumFractionDigits: 2,
                         })}
                       </span>
                     </div>
 
-                    {/* 🆕 Garantía estimada (15% SOLO de productos) */}
+                    {/* Garantía estimada */}
                     <div
                       style={{
                         marginTop: 8,
@@ -598,10 +761,17 @@ export default function OrderCreateStep2() {
                         }}
                       >
                         <Shield size={16} />
-                        Garantía estimada (15% s/productos):
+                        Garantía estimada:
                       </span>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: '#78350f' }}>
-                        ${garantiaCalculada.toLocaleString('es-AR', {
+                      <span
+                        style={{
+                          fontSize: 15,
+                          fontWeight: 700,
+                          color: '#78350f',
+                        }}
+                      >
+                        $
+                        {garantiaCalculada.toLocaleString('es-AR', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                         })}
@@ -620,7 +790,8 @@ export default function OrderCreateStep2() {
                 {/* Seña */}
                 <div style={styles.fieldGroup}>
                   <label style={styles.label}>
-                    Monto de seña <span style={{ color: '#ef4444' }}>*</span>
+                    Monto de seña{' '}
+                    <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="number"
@@ -640,8 +811,10 @@ export default function OrderCreateStep2() {
                       cursor: autoSenia ? 'not-allowed' : 'text',
                     }}
                   />
-                  {errs.senia && <div style={styles.errorText}>{errs.senia}</div>}
-                  
+                  {errs.senia && (
+                    <div style={styles.errorText}>{errs.senia}</div>
+                  )}
+
                   <label
                     style={{
                       display: 'flex',
@@ -663,13 +836,28 @@ export default function OrderCreateStep2() {
                           setSenia('0.00');
                         }
                       }}
-                      style={{ width: 18, height: 18, cursor: 'pointer' }}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        cursor: 'pointer',
+                      }}
                     />
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 13,
+                          marginBottom: 2,
+                        }}
+                      >
                         Calcular 20% automáticamente
                       </div>
-                      <div style={{ fontSize: 12, color: '#6b7280' }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: '#6b7280',
+                        }}
+                      >
                         Se calcula sobre el total (incluye flete)
                       </div>
                     </div>
@@ -689,10 +877,24 @@ export default function OrderCreateStep2() {
                         gap: 8,
                       }}
                     >
-                      <AlertCircle size={16} color="#d97706" style={{ flexShrink: 0, marginTop: 2 }} />
-                      <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.5 }}>
-                        <strong>Seña $0:</strong> El cliente aún no pagó ningún adelanto. 
-                        El pedido quedará como presupuesto hasta que se reciba el pago.
+                      <AlertCircle
+                        size={16}
+                        color="#d97706"
+                        style={{
+                          flexShrink: 0,
+                          marginTop: 2,
+                        }}
+                      />
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: '#92400e',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        <strong>Seña $0:</strong> El cliente aún no pagó
+                        ningún adelanto. El pedido quedará como
+                        presupuesto hasta que se reciba el pago.
                       </div>
                     </div>
                   )}
@@ -701,7 +903,8 @@ export default function OrderCreateStep2() {
                 {/* Método de pago */}
                 <div style={styles.fieldGroup}>
                   <label style={styles.label}>
-                    Método de pago <span style={{ color: '#ef4444' }}>*</span>
+                    Método de pago{' '}
+                    <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <select
                     value={formaPago}
@@ -715,216 +918,76 @@ export default function OrderCreateStep2() {
                     <option value="efectivo">Efectivo</option>
                     <option value="transferencia">Transferencia</option>
                   </select>
-                  {errs.formaPago && <div style={styles.errorText}>{errs.formaPago}</div>}
+                  {errs.formaPago && (
+                    <div style={styles.errorText}>{errs.formaPago}</div>
+                  )}
+                  <p
+                    style={{
+                      margin: '8px0 0',
+                      fontSize: 12,
+                      color: '#6b7280',
+                    }}
+                  >
+                    Solo se registra el método; los datos de la cuenta y
+                    comprobantes se manejan por fuera del sistema.
+                  </p>
                 </div>
               </div>
 
-              {/* Info bancaria */}
-              {formaPago === 'transferencia' && (
-                <div style={{ marginTop: 24 }}>
-                  <div style={{ ...styles.sectionTitle, marginBottom: 16 }}>
-                    Datos para transferencia
-                  </div>
+              {/* Comprobante de Seña */}
+              <div style={{ marginTop: 20 }}>
+                <label style={styles.label}>
+                  Comprobante de seña (opcional)
+                </label>
+                <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+                  Podés adjuntar una foto del comprobante de pago de la seña (máx. 5MB)
+                </p>
 
-                  {CUENTAS_BANCARIAS.map((cuenta) => (
-                    <div
-                      key={cuenta.id}
-                      style={{
-                        padding: 20,
-                        background: 'white',
-                        border: `2px solid ${cuenta.color}30`,
-                        borderRadius: 12,
-                        marginBottom: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 16,
-                          fontWeight: 700,
-                          color: '#111827',
-                          marginBottom: 16,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: cuenta.color,
-                          }}
-                        />
-                        {cuenta.banco}
-                      </div>
-
-                      <div style={{ ...styles.grid2, gap: 16 }}>
-                        <div>
-                          <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 6 }}>
-                            ALIAS
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span
-                              style={{
-                                fontSize: 14,
-                                fontWeight: 600,
-                                color: '#111827',
-                                fontFamily: 'monospace',
-                              }}
-                            >
-                              {cuenta.alias}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => copiarTexto(cuenta.alias)}
-                              style={{
-                                padding: '4px 10px',
-                                fontSize: 11,
-                                background: cuenta.color,
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: 6,
-                                cursor: 'pointer',
-                                fontWeight: 600,
-                              }}
-                            >
-                              Copiar
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 6 }}>
-                            CBU
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span
-                              style={{
-                                fontSize: 13,
-                                fontWeight: 600,
-                                color: '#111827',
-                                fontFamily: 'monospace',
-                              }}
-                            >
-                              {cuenta.cbu}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => copiarTexto(cuenta.cbu)}
-                              style={{
-                                padding: '4px 10px',
-                                fontSize: 11,
-                                background: cuenta.color,
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: 6,
-                                cursor: 'pointer',
-                                fontWeight: 600,
-                              }}
-                            >
-                              Copiar
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 6 }}>
-                            TITULAR
-                          </div>
-                          <span style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>
-                            {cuenta.titular}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-
-                  <div
-                    style={{
-                      marginTop: 16,
-                      padding: 16,
-                      background: '#f0fdf4',
-                      border: '2px solid #86efac',
-                      borderRadius: 12,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#166534', marginBottom: 4 }}>
-                        ¿Ya realizaste la transferencia?
-                      </div>
-                      <div style={{ fontSize: 13, color: '#15803d' }}>
-                        Enviá el comprobante por WhatsApp
-                      </div>
-                    </div>
+                {!previewSena ? (
+                  <label style={styles.uploadButton}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImagenSenaChange}
+                      style={{ display: 'none' }}
+                    />
+                    <Upload size={18} />
+                    Seleccionar imagen
+                  </label>
+                ) : (
+                  <div style={styles.imagePreviewContainer}>
+                    <img
+                      src={previewSena}
+                      alt="Comprobante de seña"
+                      style={styles.imagePreview}
+                    />
                     <button
                       type="button"
-                      onClick={enviarWhatsApp}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '10px 18px',
-                        background: '#25d366',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: 999,
-                        fontSize: 14,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        flexShrink: 0,
-                      }}
+                      onClick={handleRemoveImagenSena}
+                      style={styles.removeImageButton}
+                      title="Eliminar imagen"
                     >
-                      <MessageCircle size={18} />
-                      Enviar
+                      <X size={16} />
                     </button>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Comprobante */}
-              <div style={{ marginTop: 24 }}>
-                <label style={styles.label}>Comprobante de pago (opcional)</label>
-                <div
-                  style={{
-                    padding: 20,
-                    border: '2px dashed #d1d5db',
-                    borderRadius: 12,
-                    background: 'white',
-                    textAlign: 'center',
-                  }}
-                >
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setComprobanteFile(e.target.files?.[0] || null)}
-                    style={{ display: 'none' }}
-                    id="comprobante-upload"
-                  />
-                  <label
-                    htmlFor="comprobante-upload"
+                {imagenSena && (
+                  <div
                     style={{
-                      display: 'inline-flex',
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: '#10b981',
+                      display: 'flex',
                       alignItems: 'center',
-                      gap: 8,
-                      padding: '10px 20px',
-                      background: '#f9fafb',
-                      border: '1px solid #d1d5db',
-                      borderRadius: 8,
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: '#374151',
-                      cursor: 'pointer',
+                      gap: 6,
                     }}
                   >
-                    <Upload size={16} />
-                    {comprobanteFile ? comprobanteFile.name : 'Seleccionar archivo'}
-                  </label>
-                </div>
+                    <ImageIcon size={14} />
+                    {imagenSena.name || 'Imagen cargada'} 
+                    {imagenSena.size && ` (${(imagenSena.size / 1024).toFixed(1)} KB)`}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -954,8 +1017,12 @@ export default function OrderCreateStep2() {
                       cursor: autoGarantia ? 'not-allowed' : 'text',
                     }}
                   />
-                  {errs.garantiaMonto && <div style={styles.errorText}>{errs.garantiaMonto}</div>}
-                  
+                  {errs.garantiaMonto && (
+                    <div style={styles.errorText}>
+                      {errs.garantiaMonto}
+                    </div>
+                  )}
+
                   <label
                     style={{
                       display: 'flex',
@@ -977,14 +1044,30 @@ export default function OrderCreateStep2() {
                           setGarantiaMonto('0.00');
                         }
                       }}
-                      style={{ width: 18, height: 18, cursor: 'pointer' }}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        cursor: 'pointer',
+                      }}
                     />
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 13,
+                          marginBottom: 2,
+                        }}
+                      >
                         Calcular 15% automáticamente
                       </div>
-                      <div style={{ fontSize: 12, color: '#6b7280' }}>
-                        Se calcula sobre subtotal de productos (sin flete)
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: '#6b7280',
+                        }}
+                      >
+                        Se calcula según el subtotal de productos que
+                        definiste en el paso 1.
                       </div>
                     </div>
                   </label>
@@ -1003,11 +1086,32 @@ export default function OrderCreateStep2() {
                         gap: 8,
                       }}
                     >
-                      <Shield size={16} color="#1d4ed8" style={{ flexShrink: 0, marginTop: 2 }} />
-                      <div style={{ fontSize: 12, color: '#1e40af', lineHeight: 1.5 }}>
-                        <strong>Garantía ${Number(garantiaMonto).toLocaleString()}:</strong> Este monto se registra 
-                        pero NO está cobrado. Recordá cambiar el estado a "Monto/Documento Recibido" cuando 
-                        el cliente entregue la garantía.
+                      <Shield
+                        size={16}
+                        color="#1d4ed8"
+                        style={{
+                          flexShrink: 0,
+                          marginTop: 2,
+                        }}
+                      />
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: '#1e40af',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        <strong>
+                          Garantía $
+                          {Number(
+                            garantiaMonto || 0
+                          ).toLocaleString('es-AR')}
+                          :
+                        </strong>{' '}
+                        Este monto se registra pero NO está cobrado.
+                        Recordá cambiar el estado a "Monto/Documento
+                        Recibido" cuando el cliente entregue la
+                        garantía.
                       </div>
                     </div>
                   )}
@@ -1025,7 +1129,13 @@ export default function OrderCreateStep2() {
                     <option value="servicio">Servicio/Boleta</option>
                     <option value="otro">Otro Documento</option>
                   </select>
-                  <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6b7280' }}>
+                  <p
+                    style={{
+                      margin: '8px 0 0',
+                      fontSize: 12,
+                      color: '#6b7280',
+                    }}
+                  >
                     Documento que se tomará como garantía de respaldo.
                   </p>
                 </div>
@@ -1047,7 +1157,9 @@ export default function OrderCreateStep2() {
 
               {/* Archivo respaldo */}
               <div style={{ marginTop: 20 }}>
-                <label style={styles.label}>Subir archivo de respaldo (opcional)</label>
+                <label style={styles.label}>
+                  Subir archivo de respaldo (opcional)
+                </label>
                 <div
                   style={{
                     padding: 20,
@@ -1060,7 +1172,9 @@ export default function OrderCreateStep2() {
                   <input
                     type="file"
                     accept="image/*,application/pdf"
-                    onChange={(e) => setGarantiaFile(e.target.files?.[0] || null)}
+                    onChange={(e) =>
+                      setGarantiaFile(e.target.files?.[0] || null)
+                    }
                     style={{ display: 'none' }}
                     id="garantia-upload"
                   />
@@ -1084,9 +1198,15 @@ export default function OrderCreateStep2() {
                     {getGarantiaFileName()}
                   </label>
                 </div>
-                <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6b7280' }}>
-                  Acepta imágenes y PDF. El archivo se asocia al tipo de respaldo
-                  seleccionado ({garantiaTipo}).
+                <p
+                  style={{
+                    margin: '8px 0 0',
+                    fontSize: 12,
+                    color: '#6b7280',
+                  }}
+                >
+                  Acepta imágenes y PDF. El archivo se asocia al tipo de
+                  respaldo seleccionado ({garantiaTipo}).
                 </p>
               </div>
             </div>
@@ -1104,7 +1224,10 @@ export default function OrderCreateStep2() {
               >
                 {saving ? (
                   <>
-                    <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />
+                    <Loader2
+                      size={20}
+                      style={{ animation: 'spin 1s linear infinite' }}
+                    />
                     Guardando...
                   </>
                 ) : (
@@ -1148,11 +1271,6 @@ export default function OrderCreateStep2() {
             zIndex: 9999,
             padding: 20,
           }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              // Click fuera del modal no hace nada por ahora
-            }
-          }}
         >
           <div
             style={{
@@ -1164,7 +1282,14 @@ export default function OrderCreateStep2() {
               boxShadow: '0 20px 45px rgba(15,23,42,0.35)',
             }}
           >
-            <div style={{ display: 'flex', gap: 16, marginBottom: 24, alignItems: 'flex-start' }}>
+            <div
+              style={{
+                display: 'flex',
+                gap: 16,
+                marginBottom: 24,
+                alignItems: 'flex-start',
+              }}
+            >
               <div
                 style={{
                   width: 48,
@@ -1180,11 +1305,27 @@ export default function OrderCreateStep2() {
                 <MapPin size={24} color="#667eea" />
               </div>
               <div style={{ flex: 1 }}>
-                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#111827', marginBottom: 6 }}>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: '#111827',
+                    marginBottom: 6,
+                  }}
+                >
                   Datos de entrega del pedido
                 </h2>
-                <p style={{ margin: 0, fontSize: 14, color: '#6b7280', lineHeight: 1.5 }}>
-                  Este pedido es con <strong>ENTREGA</strong>. Completá la dirección y los datos de contacto para la logística.
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 14,
+                    color: '#6b7280',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Este pedido es con <strong>ENTREGA</strong>. Completá la
+                  dirección y los datos de contacto para la logística.
                 </p>
               </div>
             </div>
@@ -1192,13 +1333,18 @@ export default function OrderCreateStep2() {
             <div style={{ display: 'grid', gap: 16 }}>
               {/* Dirección */}
               <div>
-                <label style={{ ...styles.label, marginBottom: 6 }}>
-                  Dirección de entrega <span style={{ color: '#ef4444' }}>*</span>
+                <label
+                  style={{ ...styles.label, marginBottom: 6 }}
+                >
+                  Dirección de entrega{' '}
+                  <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
                   value={entregaDireccion}
-                  onChange={(e) => setEntregaDireccion(e.target.value)}
+                  onChange={(e) =>
+                    setEntregaDireccion(e.target.value)
+                  }
                   placeholder="Calle, número, barrio, ciudad"
                   style={{
                     ...styles.input,
@@ -1206,19 +1352,25 @@ export default function OrderCreateStep2() {
                   }}
                 />
                 {entregaErrs.direccion && (
-                  <div style={styles.errorText}>{entregaErrs.direccion}</div>
+                  <div style={styles.errorText}>
+                    {entregaErrs.direccion}
+                  </div>
                 )}
               </div>
 
               {/* Referencia */}
               <div>
-                <label style={{ ...styles.label, marginBottom: 6 }}>
+                <label
+                  style={{ ...styles.label, marginBottom: 6 }}
+                >
                   Referencia / piso / depto (opcional)
                 </label>
                 <input
                   type="text"
                   value={entregaReferencia}
-                  onChange={(e) => setEntregaReferencia(e.target.value)}
+                  onChange={(e) =>
+                    setEntregaReferencia(e.target.value)
+                  }
                   placeholder="Ej: Casa verde, portón negro, piso 3, depto B"
                   style={styles.input}
                 />
@@ -1227,53 +1379,73 @@ export default function OrderCreateStep2() {
               {/* Persona + Teléfono */}
               <div style={styles.grid2}>
                 <div>
-                  <label style={{ ...styles.label, marginBottom: 6 }}>
-                    Persona que recibe <span style={{ color: '#ef4444' }}>*</span>
+                  <label
+                    style={{ ...styles.label, marginBottom: 6 }}
+                  >
+                    Persona que recibe{' '}
+                    <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="text"
                     value={entregaPersona}
-                    onChange={(e) => setEntregaPersona(e.target.value)}
+                    onChange={(e) =>
+                      setEntregaPersona(e.target.value)
+                    }
                     placeholder="Nombre y apellido"
                     style={{
                       ...styles.input,
-                      ...(entregaErrs.persona && styles.inputError),
+                      ...(entregaErrs.persona &&
+                        styles.inputError),
                     }}
                   />
                   {entregaErrs.persona && (
-                    <div style={styles.errorText}>{entregaErrs.persona}</div>
+                    <div style={styles.errorText}>
+                      {entregaErrs.persona}
+                    </div>
                   )}
                 </div>
 
                 <div>
-                  <label style={{ ...styles.label, marginBottom: 6 }}>
-                    Teléfono de contacto <span style={{ color: '#ef4444' }}>*</span>
+                  <label
+                    style={{ ...styles.label, marginBottom: 6 }}
+                  >
+                    Teléfono de contacto{' '}
+                    <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="text"
                     value={entregaTelefono}
-                    onChange={(e) => setEntregaTelefono(e.target.value)}
+                    onChange={(e) =>
+                      setEntregaTelefono(e.target.value)
+                    }
                     placeholder="Ej: 3875 123456"
                     style={{
                       ...styles.input,
-                      ...(entregaErrs.telefono && styles.inputError),
+                      ...(entregaErrs.telefono &&
+                        styles.inputError),
                     }}
                   />
                   {entregaErrs.telefono && (
-                    <div style={styles.errorText}>{entregaErrs.telefono}</div>
+                    <div style={styles.errorText}>
+                      {entregaErrs.telefono}
+                    </div>
                   )}
                 </div>
               </div>
 
               {/* Horario */}
               <div>
-                <label style={{ ...styles.label, marginBottom: 6 }}>
+                <label
+                  style={{ ...styles.label, marginBottom: 6 }}
+                >
                   Franja horaria preferida (opcional)
                 </label>
                 <input
                   type="text"
                   value={entregaHorario}
-                  onChange={(e) => setEntregaHorario(e.target.value)}
+                  onChange={(e) =>
+                    setEntregaHorario(e.target.value)
+                  }
                   placeholder="Ej: entre 9:00 y 11:00 hs"
                   style={styles.input}
                 />
@@ -1316,7 +1488,13 @@ export default function OrderCreateStep2() {
               >
                 {savingEntrega ? (
                   <>
-                    <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                    <Loader2
+                      size={16}
+                      style={{
+                        animation:
+                          'spin 1s linear infinite',
+                      }}
+                    />
                     Guardando...
                   </>
                 ) : (

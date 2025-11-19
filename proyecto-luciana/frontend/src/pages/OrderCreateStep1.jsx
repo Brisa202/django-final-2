@@ -2,15 +2,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Layout from '../components/Layout';
+import ProductLineItem from '../pages/ProductLineItem';
+import ClientSearchSelector from '../pages/ClientSearchSelector';
 import axios from '../api/axios';
 import {
   ArrowLeft,
   Plus,
-  Trash2,
   AlertCircle,
   Truck,
   Store,
-  MapPin,
   Shield,
 } from 'lucide-react';
 import { confirm, error } from './alerts';
@@ -33,15 +33,6 @@ const isValidYear = (dateStr) => {
   return year >= 2024 && year <= 2030;
 };
 
-// 🆕 Zonas de entrega con sus costos
-const ZONAS_ENTREGA = [
-  { value: 'Zona Macrocentro', label: 'Zona Macrocentro', costo: 2800 },
-  { value: 'Zona Norte', label: 'Zona Norte', costo: 3000 },
-  { value: 'Zona Oeste', label: 'Zona Oeste', costo: 4000 },
-  { value: 'Zona Este', label: 'Zona Este', costo: 5000 },
-  { value: 'Zona Sur', label: 'Zona Sur', costo: 5500 },
-];
-
 export default function OrderCreateStep1() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -60,7 +51,8 @@ export default function OrderCreateStep1() {
   // datos de ENTREGA
   const [direccionEntrega, setDireccionEntrega] = useState('');
   const [referenciaEntrega, setReferenciaEntrega] = useState('');
-  const [zonaEntrega, setZonaEntrega] = useState(''); // 🆕
+  const [costoFlete, setCostoFlete] = useState('');
+  const [zonaEntrega, setZonaEntrega] = useState('');
 
   // ítems
   const [items, setItems] = useState([]);
@@ -102,16 +94,10 @@ export default function OrderCreateStep1() {
     setTipoServicio(s.tipoServicio || 'RETIRO');
     setDireccionEntrega(s.direccionEntrega || '');
     setReferenciaEntrega(s.referenciaEntrega || '');
-    setZonaEntrega(s.zonaEntrega || ''); // 🆕
-    setItems(Array.isArray(s.items) ? s.items : []);
+    setCostoFlete(s.costoFlete || '');
+    const restored = Array.isArray(s.items) ? s.items : [];
+    setItems(restored);
   }, [location.state]);
-
-  // 🆕 Calcular costo de flete según zona
-  const costoFlete = useMemo(() => {
-    if (tipoServicio !== 'ENTREGA' || !zonaEntrega) return 0;
-    const zona = ZONAS_ENTREGA.find(z => z.value === zonaEntrega);
-    return zona ? zona.costo : 0;
-  }, [tipoServicio, zonaEntrega]);
 
   // Calcular total de productos
   const totalProductos = useMemo(() => {
@@ -122,12 +108,13 @@ export default function OrderCreateStep1() {
     }, 0);
   }, [items]);
 
-  // 🆕 Calcular total con flete
+  // Total con flete (si aplica)
   const totalConFlete = useMemo(() => {
-    return totalProductos + costoFlete;
-  }, [totalProductos, costoFlete]);
+    const flete = tipoServicio === 'ENTREGA' ? parseFloat(costoFlete || 0) : 0;
+    return Math.round((totalProductos + flete) * 100) / 100;
+  }, [totalProductos, costoFlete, tipoServicio]);
 
-  // 🆕 Calcular garantía (15% solo de productos, SIN flete)
+  // Garantía (15% solo de productos)
   const garantia = useMemo(() => {
     return totalProductos * 0.15;
   }, [totalProductos]);
@@ -142,15 +129,16 @@ export default function OrderCreateStep1() {
         if (!value) return 'Seleccioná un cliente.';
         return '';
 
-      case 'evento':
+      case 'evento': {
         if (!value) return 'Indicá fecha/hora del evento.';
         if (!isValidYear(value)) return 'El año debe estar entre 2024 y 2030.';
         const ev = new Date(value);
         if (!(ev instanceof Date && !isNaN(ev))) return 'Fecha inválida.';
         if (ev < now) return 'No podés elegir una fecha pasada.';
         return '';
+      }
 
-      case 'fechaEntrega':
+      case 'fechaEntrega': {
         if (!value) return 'Indicá fecha/hora de entrega.';
         if (!isValidYear(value)) return 'El año debe estar entre 2024 y 2030.';
         const ent = new Date(value);
@@ -160,8 +148,9 @@ export default function OrderCreateStep1() {
           return 'La entrega debe ser antes del evento.';
         }
         return '';
+      }
 
-      case 'devolucion':
+      case 'devolucion': {
         if (!value) return 'Indicá fecha/hora de devolución.';
         if (!isValidYear(value)) return 'El año debe estar entre 2024 y 2030.';
         const dev = new Date(value);
@@ -171,6 +160,7 @@ export default function OrderCreateStep1() {
           return 'La devolución debe ser posterior al evento.';
         }
         return '';
+      }
 
       case 'direccionEntrega':
         if (tipoServicio === 'ENTREGA' && !value.trim()) {
@@ -178,9 +168,9 @@ export default function OrderCreateStep1() {
         }
         return '';
 
-      case 'zonaEntrega':
-        if (tipoServicio === 'ENTREGA' && !value) {
-          return 'Seleccioná una zona de entrega.';
+      case 'costoFlete':
+        if (tipoServicio === 'ENTREGA' && (!value || parseFloat(value) < 0)) {
+          return 'Indicá el costo del flete (mayor o igual a 0).';
         }
         return '';
 
@@ -190,24 +180,24 @@ export default function OrderCreateStep1() {
   };
 
   const handleBlur = (field) => {
-    setTouched(prev => ({ ...prev, [field]: true }));
+    setTouched((prev) => ({ ...prev, [field]: true }));
     const value = {
       cliente: clienteId,
       evento,
       fechaEntrega,
       devolucion,
       direccionEntrega,
-      zonaEntrega,
+      costoFlete,
     }[field];
     const errorMsg = validateField(field, value);
-    setErrs(prev => ({ ...prev, [field]: errorMsg }));
+    setErrs((prev) => ({ ...prev, [field]: errorMsg }));
   };
 
   const handleChange = (field, value, setter) => {
     setter(value);
     if (touched[field]) {
       const errorMsg = validateField(field, value);
-      setErrs(prev => ({ ...prev, [field]: errorMsg }));
+      setErrs((prev) => ({ ...prev, [field]: errorMsg }));
     }
     setMsg('');
   };
@@ -250,25 +240,6 @@ export default function OrderCreateStep1() {
   const updItem = (idx, patch) =>
     setItems((prev) => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
 
-  const onSelectProd = (idx, pid) => {
-    const p = productos.find((pr) => pr.id === Number(pid));
-    const disp =
-      p?.stock_disponible ??
-      Math.max(0, (p?.stock ?? 0) - (p?.stock_reservado ?? 0));
-
-    const nextCant = Math.min(Number(items[idx]?.cantidad || 1), disp || 1);
-
-    updItem(idx, {
-      producto: p?.id ?? null,
-      producto_nombre: p?.nombre ?? '',
-      precio_unit: p ? String(p.precio) : '',
-      cantidad: nextCant < 1 ? 1 : nextCant,
-    });
-
-    clearItemErr(idx, 'producto');
-    setMsg('');
-  };
-
   const validateStep1 = () => {
     const e = {};
     const eRows = [];
@@ -289,8 +260,8 @@ export default function OrderCreateStep1() {
     const dirErr = validateField('direccionEntrega', direccionEntrega);
     if (dirErr) e.direccionEntrega = dirErr;
 
-    const zonaErr = validateField('zonaEntrega', zonaEntrega);
-    if (zonaErr) e.zonaEntrega = zonaErr;
+    const fleteErr = validateField('costoFlete', costoFlete);
+    if (fleteErr) e.costoFlete = fleteErr;
 
     if (items.length === 0) e.items = 'Agregá al menos un producto.';
 
@@ -330,13 +301,13 @@ export default function OrderCreateStep1() {
       fechaEntrega: true,
       devolucion: true,
       direccionEntrega: true,
-      zonaEntrega: true,
+      costoFlete: true,
     });
 
     const { e: eCab, eRows } = validateStep1();
     setErrs(eCab);
     setItemErrs(eRows || []);
-    
+
     if (Object.keys(eCab).length || (eRows && eRows.length)) {
       setMsg('Por favor, corregí los errores en el formulario antes de continuar.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -353,12 +324,11 @@ export default function OrderCreateStep1() {
         tipoServicio,
         direccionEntrega: tipoServicio === 'ENTREGA' ? direccionEntrega : '',
         referenciaEntrega: tipoServicio === 'ENTREGA' ? referenciaEntrega : '',
-        zonaEntrega: tipoServicio === 'ENTREGA' ? zonaEntrega : '', // 🆕
-        costoFlete, // 🆕
+        costoFlete: tipoServicio === 'ENTREGA' ? costoFlete : '',
         items,
         total: totalProductos,
-        totalConFlete, // 🆕
-        garantia, // 🆕
+        totalConFlete,
+        garantia,
       },
     });
   };
@@ -572,27 +542,25 @@ export default function OrderCreateStep1() {
 
               <div style={styles.fieldGroup}>
                 <label style={styles.label}>Cliente</label>
-                <select
-                  value={clienteId}
-                  onChange={(e) => handleChange('cliente', e.target.value, setClienteId)}
-                  onBlur={() => handleBlur('cliente')}
-                  style={{
-                    ...styles.select,
-                    ...(getFieldStatus('cliente') === 'error' && styles.inputError),
-                    ...(getFieldStatus('cliente') === 'success' && styles.inputSuccess),
+                <ClientSearchSelector
+                  clientes={clientes}
+                  selectedClientId={clienteId}
+                  onClientSelect={(id) => {
+                    setClienteId(String(id));
+                    if (touched.cliente) {
+                      const errorMsg = validateField('cliente', String(id));
+                      setErrs(prev => ({ ...prev, cliente: errorMsg }));
+                    }
+                    setMsg('');
                   }}
-                >
-                  <option value="">— Seleccionar cliente —</option>
-                  {clientes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nombre} {c.apellido}{' '}
-                      {c.documento ? `(${c.documento})` : ''}
-                    </option>
-                  ))}
-                </select>
-                {errs.cliente && touched.cliente && (
-                  <div style={styles.errorText}>{errs.cliente}</div>
-                )}
+                  onClientClear={() => {
+                    setClienteId('');
+                    setTouched(prev => ({ ...prev, cliente: true }));
+                    setErrs(prev => ({ ...prev, cliente: 'Seleccioná un cliente.' }));
+                  }}
+                  error={errs.cliente}
+                  touched={touched.cliente}
+                />
               </div>
             </div>
 
@@ -650,8 +618,7 @@ export default function OrderCreateStep1() {
                 <div
                   onClick={() => {
                     setTipoServicio('RETIRO');
-                    setZonaEntrega('');
-                    setErrs(prev => ({ ...prev, zonaEntrega: '' }));
+                    setCostoFlete('');
                     setMsg('');
                   }}
                   style={{
@@ -698,55 +665,6 @@ export default function OrderCreateStep1() {
 
               {tipoServicio === 'ENTREGA' && (
                 <div style={{ marginTop: 20 }}>
-                  {/* 🆕 Zona de entrega */}
-                  <div style={styles.fieldGroup}>
-                    <label style={styles.label}>
-                      <MapPin size={14} style={{ display: 'inline', marginRight: 4 }} />
-                      Zona de entrega <span style={{ color: '#ef4444' }}>*</span>
-                    </label>
-                    <select
-                      value={zonaEntrega}
-                      onChange={(e) =>
-                        handleChange('zonaEntrega', e.target.value, setZonaEntrega)
-                      }
-                      onBlur={() => handleBlur('zonaEntrega')}
-                      style={{
-                        ...styles.select,
-                        ...(getFieldStatus('zonaEntrega') === 'error' && styles.inputError),
-                        ...(getFieldStatus('zonaEntrega') === 'success' && styles.inputSuccess),
-                      }}
-                    >
-                      <option value="">— Seleccionar zona —</option>
-                      {ZONAS_ENTREGA.map((zona) => (
-                        <option key={zona.value} value={zona.value}>
-                          {zona.label} - ${zona.costo.toLocaleString()}
-                        </option>
-                      ))}
-                    </select>
-                    {errs.zonaEntrega && touched.zonaEntrega && (
-                      <div style={styles.errorText}>{errs.zonaEntrega}</div>
-                    )}
-                    {zonaEntrega && (
-                      <div
-                        style={{
-                          marginTop: 8,
-                          padding: '8px 12px',
-                          background: '#f0f4ff',
-                          border: '1px solid #c7d2fe',
-                          borderRadius: 8,
-                          fontSize: 13,
-                          color: '#4338ca',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                        }}
-                      >
-                        <Truck size={14} />
-                        Costo de flete: <strong>${costoFlete.toLocaleString()}</strong>
-                      </div>
-                    )}
-                  </div>
-
                   <div style={styles.grid2}>
                     <div style={styles.fieldGroup}>
                       <label style={styles.label}>
@@ -782,6 +700,34 @@ export default function OrderCreateStep1() {
                       />
                     </div>
                   </div>
+
+                  {/* Campo de costo de flete */}
+                  <div style={{ marginTop: 20 }}>
+                    <div style={styles.fieldGroup}>
+                      <label style={styles.label}>
+                        Costo de flete <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={costoFlete}
+                        onChange={(e) =>
+                          handleChange('costoFlete', e.target.value, setCostoFlete)
+                        }
+                        onBlur={() => handleBlur('costoFlete')}
+                        placeholder="0.00"
+                        style={{
+                          ...styles.input,
+                          ...(getFieldStatus('costoFlete') === 'error' && styles.inputError),
+                          ...(getFieldStatus('costoFlete') === 'success' && styles.inputSuccess),
+                        }}
+                      />
+                      {errs.costoFlete && touched.costoFlete && (
+                        <div style={styles.errorText}>{errs.costoFlete}</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -802,7 +748,7 @@ export default function OrderCreateStep1() {
                       handleChange('evento', e.target.value, setEvento);
                       if (devolucion && new Date(e.target.value) >= new Date(devolucion)) {
                         setDevolucion('');
-                        setErrs(prev => ({ ...prev, devolucion: '' }));
+                        setErrs((prev) => ({ ...prev, devolucion: '' }));
                       }
                     }}
                     onBlur={() => handleBlur('evento')}
@@ -888,7 +834,7 @@ export default function OrderCreateStep1() {
                   marginBottom: 20,
                 }}
               >
-                <div style={{ ...styles.sectionTitle, marginBottom: 0 }}>Productos</div>
+                <div style={{ ...styles.sectionTitle, marginBottom:0 }}>Productos</div>
                 <button
                   type="button"
                   onClick={addItem}
@@ -912,286 +858,39 @@ export default function OrderCreateStep1() {
                 </button>
               </div>
 
-              <div style={{ overflowX: 'auto', background: 'white', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ background: '#f9fafb' }}>
-                      <th
-                        style={{
-                          padding: '12px',
-                          textAlign: 'left',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          color: '#6b7280',
-                          borderBottom: '1px solid #e5e7eb',
-                        }}
-                      >
-                        Producto
-                      </th>
-                      <th
-                        style={{
-                          padding: '12px',
-                          textAlign: 'left',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          color: '#6b7280',
-                          borderBottom: '1px solid #e5e7eb',
-                          width: '80px',
-                        }}
-                      >
-                        Disp.
-                      </th>
-                      <th
-                        style={{
-                          padding: '12px',
-                          textAlign: 'left',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          color: '#6b7280',
-                          borderBottom: '1px solid #e5e7eb',
-                          width: '120px',
-                        }}
-                      >
-                        Cantidad
-                      </th>
-                      <th
-                        style={{
-                          padding: '12px',
-                          textAlign: 'left',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          color: '#6b7280',
-                          borderBottom: '1px solid #e5e7eb',
-                          width: '140px',
-                        }}
-                      >
-                        Precio unit.
-                      </th>
-                      <th
-                        style={{
-                          padding: '12px',
-                          textAlign: 'right',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          color: '#6b7280',
-                          borderBottom: '1px solid #e5e7eb',
-                          width: '120px',
-                        }}
-                      >
-                        Subtotal
-                      </th>
-                      <th
-                        style={{
-                          padding: '12px',
-                          borderBottom: '1px solid #e5e7eb',
-                          width: '50px',
-                        }}
-                      />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((it, idx) => {
-                      const p = productos.find((x) => x.id === Number(it.producto));
-                      const disp =
-                        p?.stock_disponible ??
-                        Math.max(0, (p?.stock ?? 0) - (p?.stock_reservado ?? 0));
-                      const sub =
-                        (Number(it.cantidad || 0) * Number(it.precio_unit || 0)) || 0;
-                      const er = itemErrs[idx] || {};
+              {/* Lista de productos */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {items.map((item, idx) => {
+                  const er = itemErrs[idx] || {};
+                  return (
+                    <ProductLineItem
+                      key={idx}
+                      productos={productos}
+                      value={item}
+                      onChange={(data) => {
+                        updItem(idx, data);
+                        clearItemErr(idx);
+                        setMsg('');
+                      }}
+                      onRemove={() => rmItem(idx)}
+                      error={er.producto || er.cantidad}
+                    />
+                  );
+                })}
 
-                      return (
-                        <tr key={idx}>
-                          <td
-                            style={{
-                              padding: '12px',
-                              borderBottom: '1px solid #f1f5f9',
-                            }}
-                          >
-                            <select
-                              value={it.producto || ''}
-                              onChange={(e) => onSelectProd(idx, e.target.value)}
-                              style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                borderRadius: '8px',
-                                border: er.producto
-                                  ? '1px solid #ef4444'
-                                  : '1px solid #d1d5db',
-                                background: er.producto ? '#fef2f2' : 'white',
-                                fontSize: '13px',
-                                outline: 'none',
-                              }}
-                            >
-                              <option value="">— Seleccionar —</option>
-                              {productos.map((pOpt) => (
-                                <option key={pOpt.id} value={pOpt.id}>
-                                  {pOpt.nombre} — ${Number(pOpt.precio).toLocaleString()}
-                                </option>
-                              ))}
-                            </select>
-                            {er.producto && (
-                              <div
-                                style={{
-                                  color: '#ef4444',
-                                  fontSize: '12px',
-                                  marginTop: '4px',
-                                }}
-                              >
-                                {er.producto}
-                              </div>
-                            )}
-                          </td>
-                          <td
-                            style={{
-                              padding: '12px',
-                              color: '#6b7280',
-                              fontSize: '13px',
-                              borderBottom: '1px solid #f1f5f9',
-                            }}
-                          >
-                            {p ? disp : '—'}
-                          </td>
-                          <td
-                            style={{
-                              padding: '12px',
-                              borderBottom: '1px solid #f1f5f9',
-                            }}
-                          >
-                            <input
-                              type="number"
-                              min="1"
-                              value={it.cantidad}
-                              onChange={(e) => {
-                                const raw = Number(e.target.value);
-                                let nuevaCant = Math.max(1, raw || 1);
-                                if (p && !isNaN(disp)) {
-                                  nuevaCant = Math.min(nuevaCant, disp);
-                                }
-                                updItem(idx, { cantidad: nuevaCant });
-                                clearItemErr(idx, 'cantidad');
-                                setMsg('');
-                              }}
-                              style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                borderRadius: '8px',
-                                border: er.cantidad
-                                  ? '1px solid #ef4444'
-                                  : '1px solid #d1d5db',
-                                background: er.cantidad ? '#fef2f2' : 'white',
-                                fontSize: '13px',
-                                outline: 'none',
-                              }}
-                            />
-                            {er.cantidad && (
-                              <div
-                                style={{
-                                  color: '#ef4444',
-                                  fontSize: '12px',
-                                  marginTop: '4px',
-                                }}
-                              >
-                                {er.cantidad}
-                              </div>
-                            )}
-                          </td>
-                          <td
-                            style={{
-                              padding: '12px',
-                              borderBottom: '1px solid #f1f5f9',
-                            }}
-                          >
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={it.precio_unit}
-                              onChange={(e) => {
-                                updItem(idx, { precio_unit: e.target.value });
-                                clearItemErr(idx, 'precio_unit');
-                                setMsg('');
-                              }}
-                              style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                borderRadius: '8px',
-                                border: er.precio_unit
-                                  ? '1px solid #ef4444'
-                                  : '1px solid #d1d5db',
-                                background: er.precio_unit ? '#fef2f2' : 'white',
-                                fontSize: '13px',
-                                outline: 'none',
-                              }}
-                            />
-                            {er.precio_unit && (
-                              <div
-                                style={{
-                                  color: '#ef4444',
-                                  fontSize: '12px',
-                                  marginTop: '4px',
-                                }}
-                              >
-                                {er.precio_unit}
-                              </div>
-                            )}
-                          </td>
-                          <td
-                            style={{
-                              padding: '12px',
-                              borderBottom: '1px solid #f1f5f9',
-                              fontSize: '14px',
-                              fontWeight: '600',
-                              color: '#111827',
-                              textAlign: 'right',
-                            }}
-                          >
-                            ${sub.toLocaleString('es-AR', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </td>
-                          <td
-                            style={{
-                              padding: '12px',
-                              borderBottom: '1px solid #f1f5f9',
-                              textAlign: 'center',
-                            }}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => rmItem(idx)}
-                              style={{
-                                border: 'none',
-                                background: 'transparent',
-                                cursor: 'pointer',
-                                color: '#ef4444',
-                                padding: 4,
-                              }}
-                            >
-                              <Trash2 size={18} />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-
-                    {items.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={6}
-                          style={{
-                            padding: '24px',
-                            fontSize: '13px',
-                            textAlign: 'center',
-                            color: '#9ca3af',
-                          }}
-                        >
-                          No hay productos cargados. Usá el botón <strong>"Agregar producto"</strong>.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                {items.length === 0 && (
+                  <div style={{
+                    padding: '40px 24px',
+                    fontSize: '14px',
+                    textAlign: 'center',
+                    color: '#9ca3af',
+                    background: 'white',
+                    borderRadius: 8,
+                    border: '2px dashed #e5e7eb',
+                  }}>
+                    No hay productos cargados. Usá el botón <strong>"Agregar producto"</strong> para comenzar.
+                  </div>
+                )}
               </div>
 
               {errs.items && (
@@ -1210,7 +909,7 @@ export default function OrderCreateStep1() {
                 </div>
               )}
 
-              {/* 🆕 Resumen de totales */}
+              {/* Resumen de totales */}
               <div
                 style={{
                   marginTop: 16,
@@ -1232,15 +931,12 @@ export default function OrderCreateStep1() {
                     </span>
                   </div>
 
-                  {/* Costo de flete */}
-                  {tipoServicio === 'ENTREGA' && costoFlete > 0 && (
+                  {/* Flete (solo si es ENTREGA y hay costo) */}
+                  {tipoServicio === 'ENTREGA' && costoFlete && parseFloat(costoFlete) > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 14, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Truck size={14} />
-                        Flete ({zonaEntrega}):
-                      </span>
-                      <span style={{ fontSize: 15, fontWeight: 600, color: '#4338ca' }}>
-                        ${costoFlete.toLocaleString('es-AR', {
+                      <span style={{ fontSize: 14, color: '#6b7280' }}>Costo de flete:</span>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: '#111827' }}>
+                        ${parseFloat(costoFlete || 0).toLocaleString('es-AR', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                         })}
@@ -1251,7 +947,7 @@ export default function OrderCreateStep1() {
                   {/* Línea divisoria */}
                   <div style={{ borderTop: '1px solid #e5e7eb', margin: '8px 0' }} />
 
-                  {/* Total con flete */}
+                  {/* Total */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 16, fontWeight: 600, color: '#111827' }}>Total:</span>
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#c9a961' }}>
@@ -1262,7 +958,7 @@ export default function OrderCreateStep1() {
                     </span>
                   </div>
 
-                  {/* 🆕 Garantía estimada (15%) */}
+                  {/* Garantía estimada (15%) */}
                   {totalProductos > 0 && (
                     <div
                       style={{
@@ -1340,6 +1036,3 @@ export default function OrderCreateStep1() {
     </Layout>
   );
 }
-
-
-

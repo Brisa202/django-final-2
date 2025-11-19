@@ -12,8 +12,6 @@ class Perfil(models.Model):
         ('chofer', 'Chofer'),
         ('operario_carga', 'Operario de Carga y Descarga'),
         ('encargado', 'Encargado'),
-        ('limpieza', 'Personal de Limpieza'),
-        ('lavanderia', 'Operaria de Lavandería'),
         ('cajero', 'Cajero'),
     )
 

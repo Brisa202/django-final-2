@@ -83,6 +83,11 @@ class PerfilUsuarioAPIView(APIView):
         u = request.user
         grupos = list(u.groups.values_list('name', flat=True))
 
+        # 🔥 NUEVO: Obtener el rol del perfil
+        rol = None
+        if hasattr(u, 'perfil'):
+            rol = u.perfil.rol  # 'chofer', 'cajero', 'administrador', etc.
+
         # 🔍 Contar intentos no reconocidos
         unacknowledged_count = FailedLoginAttempt.objects.filter(
             user=u, acknowledged=False
@@ -95,9 +100,9 @@ class PerfilUsuarioAPIView(APIView):
             "is_staff": u.is_staff,
             "is_superuser": u.is_superuser,
             "groups": grupos,
-            "unacknowledged_failed_attempts": unacknowledged_count,  # 👈 campo que React usa
+            "rol": rol,  # 👈 AGREGAR ESTA LÍNEA
+            "unacknowledged_failed_attempts": unacknowledged_count,
         })
-
 class FailedLoginAttemptsAPIView(APIView):
     """
     GET: Obtiene los intentos fallidos no reconocidos del usuario autenticado
